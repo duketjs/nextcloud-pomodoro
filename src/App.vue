@@ -69,6 +69,13 @@ const cycleNumber = computed(() => {
 
 	return Math.min(Math.max(1, current), s.cyclesPerTask)
 })
+// The last focus cycle of a session: once it runs out the session is over, so
+// there is no next phase to offer - the timer goes straight to Complete.
+const finalFocus = computed(() => {
+	const s = session.value
+
+	return !!s && s.phase === 'focus' && s.cyclesCompleted + 1 >= s.cyclesPerTask
+})
 // A phase whose time is up, waiting for the user because auto-transition is off.
 const waiting = computed(() => {
 	const s = session.value
@@ -78,15 +85,29 @@ const waiting = computed(() => {
 		&& s.phase !== 'done'
 		&& s.running
 		&& left.value <= 0
+		&& !finalFocus.value
 })
-const waitingMessage = computed(() => {
-	if (session.value?.phase === 'focus') {
-		return 'Focus finished'
+const waitingMessage = computed(() => (session.value?.phase === 'focus' ? 'Focus finished' : 'Rest over'))
+const waitingAction = computed(() => (session.value?.phase === 'focus' ? 'Start rest' : 'Start focus'))
+// Which colour the timer wears: focus red, rest green, an ended phase waiting on
+// the user blue, paused white, and a finished session on the theme's success.
+const timerState = computed(() => {
+	const s = session.value
+	if (!s) {
+		return ''
+	}
+	if (s.phase === 'done') {
+		return 'done'
+	}
+	if (waiting.value) {
+		return 'waiting'
+	}
+	if (!s.running) {
+		return 'paused'
 	}
 
-	return 'Rest over'
+	return s.phase === 'focus' ? 'focus' : 'rest'
 })
-const waitingAction = computed(() => (session.value?.phase === 'focus' ? 'Start rest' : 'Start focus'))
 
 /**
  * Config for an item, with defaults for anything the user has not set yet.
@@ -222,22 +243,26 @@ async function stop(): Promise<void> {
 
 async function tick(): Promise<void> {
 	now.value = Date.now()
-	// Only move on by ourselves when the user asked for it. In manual mode the
-	// clock stops at 00:00 and the panel offers a button instead.
-	if (!settings.value.autoTransition) {
+	if (!session.value || busy.value) {
 		return
 	}
-	// The phase ran out, so this cycle counts as completed. `busy` guards
-	// against a slow request firing the same transition twice.
-	if (session.value?.running && session.value.phase !== 'done' && left.value <= 0 && !busy.value) {
-		busy.value = true
-		try {
-			const result = await advancePhase(false)
-			session.value = result.session
-			taskConfig.value = result.tasks
-		} finally {
-			busy.value = false
-		}
+	const s = session.value
+	if (s.phase === 'done' || !s.running || left.value > 0) {
+		return
+	}
+	// Move on by ourselves when auto-transition is on. Also when this was the
+	// session's final focus cycle: the session is over, so there is nothing to
+	// ask the user about - it goes straight to Complete.
+	if (!settings.value.autoTransition && !finalFocus.value) {
+		return
+	}
+	busy.value = true
+	try {
+		const result = await advancePhase(false)
+		session.value = result.session
+		taskConfig.value = result.tasks
+	} finally {
+		busy.value = false
 	}
 }
 
@@ -411,17 +436,18 @@ onUnmounted(() => {
 								</p>
 							</header>
 
-							<div class="timer" :class="`timer--${session.phase}`">
+							<p class="timer-scope">
+								<template v-if="session.phase === 'done'">
+									{{ session.cyclesCompleted }} of {{ session.cyclesPerTask }} focus cycles done
+								</template>
+								<template v-else>
+									Cycle {{ cycleNumber }} of {{ session.cyclesPerTask }}
+								</template>
+							</p>
+
+							<div class="timer" :class="`timer--${timerState}`">
 								<span class="timer__phase">{{ phaseLabel }}</span>
 								<span class="timer__clock">{{ clock }}</span>
-								<span class="timer__cycle">
-									<template v-if="session.phase === 'done'">
-										{{ session.cyclesCompleted }} of {{ session.cyclesPerTask }} focus cycles done
-									</template>
-									<template v-else>
-										Cycle {{ cycleNumber }} of {{ session.cyclesPerTask }}
-									</template>
-								</span>
 								<span v-if="waiting" class="timer__waiting">{{ waitingMessage }}</span>
 								<span v-else-if="!session.running && session.phase !== 'done'" class="timer__paused">
 									Paused
@@ -632,6 +658,13 @@ onUnmounted(() => {
 	font-weight: 600;
 }
 
+/* Cycle progress sits above the timer, bold, so it is easy to spot. */
+.timer-scope {
+	font-size: 15px;
+	font-weight: bold;
+	margin: 0 0 4px;
+}
+
 .timer {
 	display: flex;
 	flex-direction: column;
@@ -640,11 +673,28 @@ onUnmounted(() => {
 	padding: 32px 20px;
 	border-radius: var(--border-radius-large);
 	border: 1px solid var(--color-border);
-	background-color: var(--color-background-dark);
 }
 
-.timer--break {
-	background-color: var(--color-primary-element-light);
+/* Explicit state colours, independent of the theme: focus is red with white
+   text, the remaining states are light with black text. */
+.timer--focus {
+	background-color: #e53935;
+	color: #ffffff;
+}
+
+.timer--rest {
+	background-color: #00e676;
+	color: #000000;
+}
+
+.timer--waiting {
+	background-color: #4da3ff;
+	color: #000000;
+}
+
+.timer--paused {
+	background-color: #ffffff;
+	color: #000000;
 }
 
 .timer--done {
@@ -664,21 +714,12 @@ onUnmounted(() => {
 	line-height: 1;
 }
 
-.timer__cycle {
-	font-size: 13px;
-	color: var(--color-text-maxcontrast);
-}
-
-.timer__waiting {
+/* Inherit the state colour set on .timer so the text stays legible on every
+   background. */
+.timer__waiting,
+.timer__paused {
 	font-size: 14px;
 	font-weight: bold;
-	color: #ff9100;
-}
-
-.timer__paused {
-	font-size: 13px;
-	font-weight: bold;
-	color: var(--color-warning);
 }
 
 .timer-placeholder {
