@@ -3,18 +3,18 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { fetchDeckItems } from './deck'
+import { fetchDeckBoardItems } from './deck'
 import type { FocusItem } from './types'
 
 /**
- * Collect the outstanding items to focus on.
+ * Collect the outstanding items of a single board.
  *
  * Deck is currently the only source; the adapter swallows its own errors and
  * returns [] so a missing or disabled Deck never breaks the page, and adding
- * another source later is just another entry here.
+ * another source later is just another call here.
  */
-export async function fetchFocusItems(): Promise<FocusItem[]> {
-	const items = await fetchDeckItems()
+export async function fetchFocusItems(boardId: number): Promise<FocusItem[]> {
+	const items = await fetchDeckBoardItems(boardId)
 
 	return items.sort(byDueThenTitle)
 }
