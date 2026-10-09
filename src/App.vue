@@ -431,6 +431,10 @@ onUnmounted(() => {
 
 					<!-- Right: the timer, once something has been started -->
 					<section class="pomodoro__col pomodoro__col--timer">
+						<header v-if="!session" class="pomodoro__header">
+							<h1>Timer</h1>
+						</header>
+
 						<template v-if="session">
 							<header class="pomodoro__header">
 								<h1>{{ session.task.title }}</h1>
