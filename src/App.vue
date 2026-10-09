@@ -9,6 +9,9 @@ import NcContent from '@nextcloud/vue/components/NcContent'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcButton from '@nextcloud/vue/components/NcButton'
+import NcSelect from '@nextcloud/vue/components/NcSelect'
+import { fetchDeckBoards } from './api/deck'
+import type { DeckBoard } from './api/deck'
 import { fetchFocusItems } from './api/items'
 import type { FocusItem } from './api/types'
 import {
@@ -27,6 +30,8 @@ import {
 import type { PomodoroSession, TaskConfig, TaskConfigMap, TimerSettings } from './api/session'
 
 const items = ref<FocusItem[]>([])
+const boards = ref<DeckBoard[]>([])
+const selectedBoard = ref<DeckBoard | null>(null)
 const loading = ref(true)
 const failed = ref(false)
 const selected = ref<FocusItem | null>(null)
@@ -42,8 +47,6 @@ const busy = ref(false)
 // mid-phase shows the correct value.
 const now = ref(Date.now())
 let ticker: number | undefined
-
-const deck = computed(() => items.value.filter((i) => i.source === 'deck'))
 
 const left = computed(() => (session.value ? remainingMs(session.value, now.value) : 0))
 const clock = computed(() => formatDuration(left.value))
@@ -115,6 +118,13 @@ function cfg(id: string): TaskConfig {
 	return taskConfig.value[id] ?? { cyclesPerTask: DEFAULT_CYCLES_PER_TASK, completed: 0, skipped: 0 }
 }
 
+/**
+ * Load the outstanding cards of the currently selected board.
+ */
+async function loadItems(): Promise<void> {
+	items.value = selectedBoard.value ? await fetchFocusItems(selectedBoard.value.id) : []
+}
+
 async function load(): Promise<void> {
 	loading.value = true
 	failed.value = false
@@ -123,12 +133,27 @@ async function load(): Promise<void> {
 		settings.value = state.settings
 		session.value = state.session
 		taskConfig.value = state.tasks
-		items.value = await fetchFocusItems()
+
+		boards.value = await fetchDeckBoards()
+		// Keep the chosen board across a refresh; fall back to the first one.
+		const stillThere = boards.value.find((board) => board.id === selectedBoard.value?.id)
+		selectedBoard.value = stillThere ?? boards.value[0] ?? null
+		await loadItems()
 	} catch (error) {
 		failed.value = true
 	} finally {
 		loading.value = false
 	}
+}
+
+/**
+ * Switching boards changes which cards are listed. Any previously selected item
+ * belongs to the old board, so drop it.
+ */
+async function onBoardChange(board: DeckBoard | null): Promise<void> {
+	selectedBoard.value = board ?? null
+	selected.value = null
+	await loadItems()
 }
 
 async function refreshCounters(): Promise<void> {
@@ -370,39 +395,53 @@ onUnmounted(() => {
 							</label>
 						</fieldset>
 
+						<div v-if="boards.length" class="board-picker">
+							<span class="board-picker__label">Deck board</span>
+							<NcSelect
+								class="board-picker__select"
+								:model-value="selectedBoard"
+								:options="boards"
+								label="title"
+								:clearable="false"
+								:searchable="false"
+								placeholder="Select a board"
+								@update:model-value="onBoardChange" />
+						</div>
+
 						<!-- Long lists scroll here rather than pushing the page down -->
 						<div class="pomodoro__scroll">
 							<NcEmptyContent
-								v-if="items.length === 0"
-								name="Nothing outstanding">
+								v-if="boards.length === 0"
+								name="No Deck boards">
 								<template #description>
-									No open Deck cards were found.
+									There are no Deck boards available to you.
 								</template>
 							</NcEmptyContent>
 
-							<template v-else>
-								<section
-									v-if="deck.length"
-									class="pomodoro__group">
-									<h2>Deck</h2>
-									<ul class="pomodoro__list">
-										<li
-											v-for="item in deck"
-											:key="item.id"
-											class="pomodoro__item"
-											:class="{ 'pomodoro__item--selected': selected?.id === item.id }"
-											@click="selected = item">
-											<span class="pomodoro__title">{{ item.title }}</span>
-											<span class="pomodoro__meta">
-												<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
-												<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
-												<span v-if="cfg(item.id).completed" class="pomodoro__completed">{{ cfg(item.id).completed }} completed</span>
-												<span v-if="cfg(item.id).skipped" class="pomodoro__skipped">{{ cfg(item.id).skipped }} skipped</span>
-											</span>
-										</li>
-									</ul>
-								</section>
-							</template>
+							<NcEmptyContent
+								v-else-if="items.length === 0"
+								name="Nothing outstanding">
+								<template #description>
+									This board has no open cards.
+								</template>
+							</NcEmptyContent>
+
+							<ul v-else class="pomodoro__list">
+								<li
+									v-for="item in items"
+									:key="item.id"
+									class="pomodoro__item"
+									:class="{ 'pomodoro__item--selected': selected?.id === item.id }"
+									@click="selected = item">
+									<span class="pomodoro__title">{{ item.title }}</span>
+									<span class="pomodoro__meta">
+										<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
+										<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
+										<span v-if="cfg(item.id).completed" class="pomodoro__completed">{{ cfg(item.id).completed }} completed</span>
+										<span v-if="cfg(item.id).skipped" class="pomodoro__skipped">{{ cfg(item.id).skipped }} skipped</span>
+									</span>
+								</li>
+							</ul>
 						</div>
 					</section>
 
@@ -588,6 +627,24 @@ onUnmounted(() => {
 	gap: 12px;
 }
 
+/* Board picker sitting directly above the item list. */
+.board-picker {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+}
+
+.board-picker__label {
+	font-size: 13px;
+	color: var(--color-text-maxcontrast);
+}
+
+.board-picker__select {
+	flex: 1 1 200px;
+	max-width: 320px;
+}
+
 /* The list scrolls on its own so a long backlog cannot push the page down. */
 .pomodoro__scroll {
 	display: flex;
@@ -596,14 +653,6 @@ onUnmounted(() => {
 	overflow-y: auto;
 	max-height: 60vh;
 	padding-right: 4px;
-}
-
-.pomodoro__group h2 {
-	font-size: 15px;
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
-	color: var(--color-text-maxcontrast);
-	margin: 12px 0 4px;
 }
 
 .pomodoro__list {
