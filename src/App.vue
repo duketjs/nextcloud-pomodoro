@@ -13,6 +13,7 @@ import NcSelect from '@nextcloud/vue/components/NcSelect'
 import { fetchDeckBoards, markCardDone } from './api/deck'
 import type { DeckBoard } from './api/deck'
 import { fetchFocusItems } from './api/items'
+import { ensureNotificationPermission, notificationsSupported, notify } from './api/notify'
 import type { FocusItem } from './api/types'
 import {
 	advancePhase,
@@ -43,6 +44,33 @@ const settings = ref<TimerSettings>({ ...DEFAULT_SETTINGS })
 // Per-item config and counters, keyed by item id.
 const taskConfig = ref<TaskConfigMap>({})
 const busy = ref(false)
+
+const notificationsAvailable = ref(notificationsSupported())
+// The phase we have already announced, so each phase pops up exactly once.
+let announcedPhase: string | null = null
+
+/**
+ * Pop up a notification for the phase whose time has just run out.
+ */
+function announcePhaseEnd(): void {
+	const current = session.value
+	if (!current) {
+		return
+	}
+	const task = current.task.title
+
+	if (current.phase === 'break') {
+		notify('Rest over', `Back to focus on "${task}".`)
+		return
+	}
+
+	// A focus phase is over: either a rest is due, or the session is finished.
+	if (finalFocus.value) {
+		notify('All cycles done', `"${task}" — ${current.cyclesPerTask} focus cycles completed.`)
+	} else {
+		notify('Focus finished', `Time for a ${current.breakMinutes} minute rest.`)
+	}
+}
 
 /**
  * Hand the focused card back to Deck as done: Deck stamps the completion date
@@ -166,6 +194,12 @@ async function load(): Promise<void> {
 		settings.value = state.settings
 		session.value = state.session
 		taskConfig.value = state.tasks
+		// A phase that is already over must not fire a pop-up just because the
+		// page was (re)loaded.
+		announcedPhase = state.session && remainingMs(state.session, Date.now()) <= 0
+			? state.session.phaseStartedAt
+			: null
+		notificationsAvailable.value = notificationsSupported()
 
 		boards.value = await fetchDeckBoards()
 		// Keep the chosen board across a refresh; fall back to the first one.
@@ -201,7 +235,19 @@ async function start(): Promise<void> {
 	}
 	busy.value = true
 	try {
+		// Asked here rather than on load: browsers only allow the permission
+		// prompt to follow a user gesture.
+		const permitted = await ensureNotificationPermission()
 		session.value = await startSession(selected.value, settings.value)
+		announcedPhase = null
+
+		if (!notificationsAvailable.value) {
+			actionError.value = 'Pop-up alerts need an HTTPS connection - this page is not served securely.'
+		} else if (!permitted) {
+			actionError.value = 'Pop-up alerts are blocked in your browser settings.'
+		} else {
+			actionError.value = null
+		}
 	} finally {
 		busy.value = false
 	}
@@ -304,6 +350,14 @@ async function tick(): Promise<void> {
 	if (s.phase === 'done' || !s.running || left.value > 0) {
 		return
 	}
+
+	// The phase's time is up. Tell the user once - whether we then move on by
+	// ourselves or wait for them to start the next phase.
+	if (announcedPhase !== s.phaseStartedAt) {
+		announcedPhase = s.phaseStartedAt
+		announcePhaseEnd()
+	}
+
 	// Move on by ourselves when auto-transition is on. Also when this was the
 	// session's final focus cycle: the session is over, so there is nothing to
 	// ask the user about - it goes straight to Complete.
