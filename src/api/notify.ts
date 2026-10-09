@@ -47,17 +47,23 @@ export async function ensureNotificationPermission(): Promise<boolean> {
 }
 
 /**
- * Show a pop-up. Silently does nothing when pop-ups are unavailable or have not
- * been allowed, so a missing permission never breaks the timer.
+ * Show a pop-up.
+ *
+ * Returns whether one was actually shown. The caller uses that to tell the
+ * server not to raise its own notification for the same phase, so the user is
+ * told exactly once - by whichever of the two could reach them.
  */
-export function notify(title: string, body: string): void {
+export function notify(title: string, body: string): boolean {
 	if (!notificationsSupported() || Notification.permission !== 'granted') {
-		return
+		return false
 	}
 
 	try {
 		new Notification(title, { body })
+
+		return true
 	} catch (error) {
 		// A failed pop-up must never take the timer down.
+		return false
 	}
 }
