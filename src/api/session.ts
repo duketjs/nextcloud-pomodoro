@@ -141,6 +141,14 @@ export async function clearSession(): Promise<void> {
 }
 
 /**
+ * Tell the server this phase has already been announced, so its background job
+ * does not raise a second notification for the same phase.
+ */
+export async function markPhaseAnnounced(): Promise<void> {
+	await axios.post(`${BASE}/session/announced`)
+}
+
+/**
  * Remaining milliseconds in the current phase, computed from the server's
  * deadline so a reload always shows the correct time.
  */

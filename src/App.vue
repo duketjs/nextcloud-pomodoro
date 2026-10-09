@@ -22,6 +22,7 @@ import {
 	DEFAULT_SETTINGS,
 	fetchState,
 	formatDuration,
+	markPhaseAnnounced,
 	remainingMs,
 	saveSettings,
 	setPaused,
@@ -59,16 +60,21 @@ function announcePhaseEnd(): void {
 	}
 	const task = current.task.title
 
+	let shown: boolean
 	if (current.phase === 'break') {
-		notify('Rest over', `Back to focus on "${task}".`)
-		return
+		shown = notify('Rest over', `Back to focus on "${task}".`)
+	} else if (finalFocus.value) {
+		// A focus phase is over: either a rest is due, or the session is finished.
+		shown = notify('All cycles done', `"${task}" — ${current.cyclesPerTask} focus cycles completed.`)
+	} else {
+		shown = notify('Focus finished', `Time for a ${current.breakMinutes} minute rest.`)
 	}
 
-	// A focus phase is over: either a rest is due, or the session is finished.
-	if (finalFocus.value) {
-		notify('All cycles done', `"${task}" — ${current.cyclesPerTask} focus cycles completed.`)
-	} else {
-		notify('Focus finished', `Time for a ${current.breakMinutes} minute rest.`)
+	// Tell the server when we showed a pop-up ourselves, so its background job
+	// does not raise a second notification for the same phase. When we could not
+	// show one (no permission, insecure connection), leave it to the server.
+	if (shown) {
+		void markPhaseAnnounced().catch(() => undefined)
 	}
 }
 

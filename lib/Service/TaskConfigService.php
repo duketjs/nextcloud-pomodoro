@@ -9,7 +9,7 @@ use OCP\IUserSession;
 
 /**
  * Per-item Pomodoro configuration and counters, keyed by the item id thrown up
- * by the import layer (e.g. `tasks:<uid>` or `deck:<id>`).
+ * by the import layer (e.g. `deck:<id>`).
  *
  * Two things live here:
  *  - cyclesPerTask: how many focus cycles the user intends to spend on that
@@ -19,6 +19,9 @@ use OCP\IUserSession;
  *
  * A skipped cycle does not count towards cyclesPerTask - abandoning a cycle is
  * not the same as finishing it.
+ *
+ * As in SessionService, every method takes an optional user id so the
+ * background job can act for a user it is not logged in as.
  */
 class TaskConfigService {
 	private const APP_ID = 'pomodoro';
@@ -36,8 +39,8 @@ class TaskConfigService {
 	/**
 	 * @return array<string, array{cyclesPerTask: int, completed: int, skipped: int}>
 	 */
-	public function getAll(): array {
-		$uid = $this->userSession->getUser()?->getUID();
+	public function getAll(?string $uid = null): array {
+		$uid = $this->resolveUid($uid);
 		if ($uid === null) {
 			return [];
 		}
@@ -66,8 +69,8 @@ class TaskConfigService {
 	/**
 	 * @return array{cyclesPerTask: int, completed: int, skipped: int}
 	 */
-	public function get(string $taskId): array {
-		$all = $this->getAll();
+	public function get(string $taskId, ?string $uid = null): array {
+		$all = $this->getAll($uid);
 
 		return $all[$taskId] ?? [
 			'cyclesPerTask' => self::DEFAULT_CYCLES,
@@ -79,22 +82,22 @@ class TaskConfigService {
 	/**
 	 * @return array{cyclesPerTask: int, completed: int, skipped: int}
 	 */
-	public function setCycles(string $taskId, int $cycles): array {
-		$all = $this->getAll();
+	public function setCycles(string $taskId, int $cycles, ?string $uid = null): array {
+		$all = $this->getAll($uid);
 		$entry = $all[$taskId] ?? ['cyclesPerTask' => self::DEFAULT_CYCLES, 'completed' => 0, 'skipped' => 0];
 		$entry['cyclesPerTask'] = $this->normaliseCycles($cycles);
 		$all[$taskId] = $entry;
-		$this->save($all);
+		$this->save($all, $uid);
 
 		return $entry;
 	}
 
-	public function recordCompleted(string $taskId): void {
-		$this->bump($taskId, 'completed');
+	public function recordCompleted(string $taskId, ?string $uid = null): void {
+		$this->bump($taskId, 'completed', $uid);
 	}
 
-	public function recordSkipped(string $taskId): void {
-		$this->bump($taskId, 'skipped');
+	public function recordSkipped(string $taskId, ?string $uid = null): void {
+		$this->bump($taskId, 'skipped', $uid);
 	}
 
 	public function normaliseCycles(int $cycles): int {
@@ -105,27 +108,31 @@ class TaskConfigService {
 		return min($cycles, self::MAX_CYCLES);
 	}
 
-	private function bump(string $taskId, string $field): void {
+	private function bump(string $taskId, string $field, ?string $uid = null): void {
 		if ($taskId === '') {
 			return;
 		}
 
-		$all = $this->getAll();
+		$all = $this->getAll($uid);
 		$entry = $all[$taskId] ?? ['cyclesPerTask' => self::DEFAULT_CYCLES, 'completed' => 0, 'skipped' => 0];
 		$entry[$field] = max(0, (int)$entry[$field]) + 1;
 		$all[$taskId] = $entry;
-		$this->save($all);
+		$this->save($all, $uid);
 	}
 
 	/**
 	 * @param array<string, array{cyclesPerTask: int, completed: int, skipped: int}> $all
 	 */
-	private function save(array $all): void {
-		$uid = $this->userSession->getUser()?->getUID();
+	private function save(array $all, ?string $uid = null): void {
+		$uid = $this->resolveUid($uid);
 		if ($uid === null) {
 			return;
 		}
 
 		$this->config->setUserValue($uid, self::APP_ID, self::KEY, json_encode($all, JSON_THROW_ON_ERROR));
+	}
+
+	private function resolveUid(?string $uid): ?string {
+		return $uid ?? $this->userSession->getUser()?->getUID();
 	}
 }

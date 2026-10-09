@@ -21,6 +21,9 @@ Features:
 	<dependencies>
 		<nextcloud min-version="31" max-version="36"/>
 	</dependencies>
+	<background-jobs>
+		<job>OCA\Pomodoro\BackgroundJob\PhaseWatcher</job>
+	</background-jobs>
 	<navigations>
 		<navigation>
 			<id>pomodoro</id>

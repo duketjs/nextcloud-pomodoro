@@ -171,4 +171,20 @@ class ApiController extends OCSController {
 
 		return new DataResponse(['cleared' => true]);
 	}
+
+	/**
+	 * Record that the front-end has already announced the current phase, so the
+	 * background job does not raise a second notification for it.
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{announced: bool}, array{}>
+	 *
+	 * 200: Recorded
+	 */
+	#[NoAdminRequired]
+	#[ApiRoute(verb: 'POST', url: '/session/announced')]
+	public function markAnnounced(): DataResponse {
+		$this->sessionService->markAnnounced();
+
+		return new DataResponse(['announced' => true]);
+	}
 }
