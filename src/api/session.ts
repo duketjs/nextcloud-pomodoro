@@ -14,6 +14,8 @@ export type Phase = 'focus' | 'break' | 'done'
 export interface TimerSettings {
 	focusMinutes: number
 	breakMinutes: number
+	/** When true the timer moves to the next phase by itself. Manual by default. */
+	autoTransition: boolean
 }
 
 /** Per-item configuration and tally, keyed by FocusItem.id. */
@@ -53,6 +55,12 @@ export interface AppState {
 
 export const DEFAULT_CYCLES_PER_TASK = 1
 
+export const DEFAULT_SETTINGS: TimerSettings = {
+	focusMinutes: 25,
+	breakMinutes: 5,
+	autoTransition: false,
+}
+
 /**
  * Everything the app needs on load: running session, settings and per-item config.
  */
@@ -61,9 +69,22 @@ export async function fetchState(): Promise<AppState> {
 
 	return {
 		session: response.data?.ocs?.data?.session ?? null,
-		settings: response.data?.ocs?.data?.settings ?? { focusMinutes: 25, breakMinutes: 5 },
+		settings: response.data?.ocs?.data?.settings ?? DEFAULT_SETTINGS,
 		tasks: response.data?.ocs?.data?.tasks ?? {},
 	}
+}
+
+/**
+ * Persist the timer preferences.
+ */
+export async function saveSettings(settings: TimerSettings): Promise<TimerSettings> {
+	const response = await axios.post(`${BASE}/settings`, {
+		focusMinutes: settings.focusMinutes,
+		breakMinutes: settings.breakMinutes,
+		autoTransition: settings.autoTransition,
+	})
+
+	return response.data?.ocs?.data?.settings ?? settings
 }
 
 /**
