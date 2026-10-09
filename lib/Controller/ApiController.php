@@ -6,7 +6,6 @@ namespace OCA\Pomodoro\Controller;
 
 use OCA\Pomodoro\Service\SessionService;
 use OCA\Pomodoro\Service\TaskConfigService;
-use OCA\Pomodoro\Service\TaskService;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\ApiRoute;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
@@ -21,7 +20,6 @@ class ApiController extends OCSController {
 	public function __construct(
 		string $appName,
 		IRequest $request,
-		private TaskService $taskService,
 		private SessionService $sessionService,
 		private TaskConfigService $taskConfigService,
 	) {
@@ -29,23 +27,10 @@ class ApiController extends OCSController {
 	}
 
 	/**
-	 * Outstanding tasks imported from the Tasks app (CalDAV VTODO objects).
-	 *
-	 * @return DataResponse<Http::STATUS_OK, array{tasks: list<array<string, mixed>>}, array{}>
-	 *
-	 * 200: Tasks returned
-	 */
-	#[NoAdminRequired]
-	#[ApiRoute(verb: 'GET', url: '/tasks')]
-	public function tasks(): DataResponse {
-		return new DataResponse([
-			'tasks' => $this->taskService->getOpenTasks(),
-		]);
-	}
-
-	/**
 	 * Everything the UI needs on load: the running session (if any), the timer
 	 * settings, and the per-item configuration and cycle counters.
+	 *
+	 * The items to focus on are read from Deck by the front-end directly.
 	 *
 	 * @return DataResponse<Http::STATUS_OK, array{session: array<string, mixed>|null, settings: array<string, mixed>, tasks: array<string, mixed>}, array{}>
 	 *
@@ -91,7 +76,7 @@ class ApiController extends OCSController {
 	#[ApiRoute(verb: 'POST', url: '/session')]
 	public function startSession(
 		string $taskId,
-		string $taskSource = 'tasks',
+		string $taskSource = 'deck',
 		string $taskTitle = '',
 		string $taskList = '',
 		int $focusMinutes = 25,

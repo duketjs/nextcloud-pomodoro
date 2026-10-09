@@ -43,7 +43,6 @@ const busy = ref(false)
 const now = ref(Date.now())
 let ticker: number | undefined
 
-const tasks = computed(() => items.value.filter((i) => i.source === 'tasks'))
 const deck = computed(() => items.value.filter((i) => i.source === 'deck'))
 
 const left = computed(() => (session.value ? remainingMs(session.value, now.value) : 0))
@@ -377,33 +376,11 @@ onUnmounted(() => {
 								v-if="items.length === 0"
 								name="Nothing outstanding">
 								<template #description>
-									No open Deck cards or Tasks were found.
+									No open Deck cards were found.
 								</template>
 							</NcEmptyContent>
 
 							<template v-else>
-								<section
-									v-if="tasks.length"
-									class="pomodoro__group">
-									<h2>Tasks</h2>
-									<ul class="pomodoro__list">
-										<li
-											v-for="item in tasks"
-											:key="item.id"
-											class="pomodoro__item"
-											:class="{ 'pomodoro__item--selected': selected?.id === item.id }"
-											@click="selected = item">
-											<span class="pomodoro__title">{{ item.title }}</span>
-											<span class="pomodoro__meta">
-												<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
-												<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
-												<span v-if="cfg(item.id).completed" class="pomodoro__completed">{{ cfg(item.id).completed }} completed</span>
-												<span v-if="cfg(item.id).skipped" class="pomodoro__skipped">{{ cfg(item.id).skipped }} skipped</span>
-											</span>
-										</li>
-									</ul>
-								</section>
-
 								<section
 									v-if="deck.length"
 									class="pomodoro__group">

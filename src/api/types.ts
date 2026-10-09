@@ -4,22 +4,20 @@
  */
 
 /**
- * A task-like item normalised across the apps we import from.
- *
- * Deck cards and Tasks (CalDAV VTODO) objects have very different shapes; the
- * UI only ever sees this.
+ * An item that can be focused on, normalised away from the shape of whatever
+ * produced it. Deck is the only source at the moment.
  */
 export interface FocusItem {
-	/** Globally unique across sources, e.g. `deck:12` or `tasks:<uid>` */
+	/** Globally unique, e.g. `deck:12` */
 	id: string
-	source: 'deck' | 'tasks'
+	source: 'deck'
 	title: string
 	/** ISO 8601 date string, or null when the item has no due date */
 	due: string | null
 	/** 1 (highest) .. 9 (lowest); null when unset */
 	priority: number | null
-	/** Source-specific status string, e.g. NEEDS-ACTION */
+	/** Source-specific status string */
 	status: string | null
-	/** Where it came from, human readable: "Board / Stack" or the calendar name */
+	/** Where it came from, human readable: "Board / Stack" */
 	list: string
 }
