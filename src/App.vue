@@ -10,7 +10,7 @@ import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
-import { fetchDeckBoards } from './api/deck'
+import { fetchDeckBoards, markCardDone } from './api/deck'
 import type { DeckBoard } from './api/deck'
 import { fetchFocusItems } from './api/items'
 import type { FocusItem } from './api/types'
@@ -35,12 +35,45 @@ const selectedBoard = ref<DeckBoard | null>(null)
 const loading = ref(true)
 const failed = ref(false)
 const selected = ref<FocusItem | null>(null)
+// Set when an action on Deck failed, so the user is not left guessing.
+const actionError = ref<string | null>(null)
 
 const session = ref<PomodoroSession | null>(null)
 const settings = ref<TimerSettings>({ ...DEFAULT_SETTINGS })
 // Per-item config and counters, keyed by item id.
 const taskConfig = ref<TaskConfigMap>({})
 const busy = ref(false)
+
+/**
+ * Hand the focused card back to Deck as done: Deck stamps the completion date
+ * and, when the board has a done column, moves the card into it. The session is
+ * over either way, so it is cleared and the list reloaded.
+ */
+async function markDone(): Promise<void> {
+	if (!session.value) {
+		return
+	}
+	const cardId = Number(session.value.task.id.replace(/^deck:/, ''))
+	if (!Number.isFinite(cardId)) {
+		actionError.value = 'This item is not a Deck card.'
+		return
+	}
+
+	busy.value = true
+	actionError.value = null
+	try {
+		await markCardDone(cardId)
+		await clearSession()
+		session.value = null
+		selected.value = null
+		await refreshCounters()
+		await loadItems()
+	} catch (error) {
+		actionError.value = 'Could not mark the card as done in Deck.'
+	} finally {
+		busy.value = false
+	}
+}
 
 // Ticks once a second so the countdown re-renders. The remaining time is always
 // derived from the server's deadline, never decremented locally, so a reload
@@ -491,7 +524,16 @@ onUnmounted(() => {
 										{{ waitingAction }}
 									</NcButton>
 								</template>
-								<template v-else-if="session.phase !== 'done'">
+								<!-- Session finished: offer to close the card out in Deck -->
+								<template v-else-if="session.phase === 'done'">
+									<NcButton
+										variant="primary"
+										:disabled="busy"
+										@click="markDone">
+										Mark as Done
+									</NcButton>
+								</template>
+								<template v-else>
 									<NcButton
 										variant="primary"
 										:disabled="busy"
@@ -512,6 +554,10 @@ onUnmounted(() => {
 									{{ session.phase === 'done' ? 'Pick another task' : 'Stop' }}
 								</NcButton>
 							</div>
+
+							<p v-if="actionError" class="timer-error">
+								{{ actionError }}
+							</p>
 						</template>
 
 						<p v-else class="timer-placeholder">
@@ -812,5 +858,11 @@ onUnmounted(() => {
 	flex-wrap: wrap;
 	align-items: flex-end;
 	gap: 14px;
+}
+
+.timer-error {
+	color: var(--color-error);
+	font-size: 13px;
+	margin: 0;
 }
 </style>
