@@ -1,12 +1,11 @@
 {
 	"name": "nextcloud/pomodoro",
-	"description": "A Pomodoro focus timer integrated into Nextcloud.Features:- Import outstanding items from Deck boards and Tasks (CalDAV VTODO)- Choose which task to focus on- Customizable focus and break durations per cycle- Set how many Pomodoro cycles complete the selected task- Notification when a focus or break period ends",
+	"description": "A Pomodoro focus timer integrated into Nextcloud.Features:- Import outstanding cards from Deck boards- Choose which card to focus on- Customizable focus and break durations per cycle- Set how many Pomodoro cycles complete the selected card- Notification when a focus or break period ends",
 	"license": "AGPL-3.0-or-later",
 	"authors": [
 		{
 			"name": "Jokersmile",
-			"email": "duketjs@gmail.com",
-			"homepage": ""
+			"email": "duketjs@gmail.com"
 		}
 	],
 	"autoload": {

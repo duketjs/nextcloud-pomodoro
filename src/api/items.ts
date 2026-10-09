@@ -4,22 +4,19 @@
  */
 
 import { fetchDeckItems } from './deck'
-import { fetchTaskItems } from './tasks'
 import type { FocusItem } from './types'
 
 /**
- * Collect outstanding items from all supported sources.
+ * Collect the outstanding items to focus on.
  *
- * The two sources are fetched independently and a failure in one never hides
- * the other; that is why each adapter swallows its own errors and returns [].
+ * Deck is currently the only source; the adapter swallows its own errors and
+ * returns [] so a missing or disabled Deck never breaks the page, and adding
+ * another source later is just another entry here.
  */
 export async function fetchFocusItems(): Promise<FocusItem[]> {
-	const [tasks, deck] = await Promise.all([
-		fetchTaskItems(),
-		fetchDeckItems(),
-	])
+	const items = await fetchDeckItems()
 
-	return [...tasks, ...deck].sort(byDueThenTitle)
+	return items.sort(byDueThenTitle)
 }
 
 /**
