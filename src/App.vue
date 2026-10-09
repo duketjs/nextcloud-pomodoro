@@ -312,13 +312,32 @@ onUnmounted(() => {
 							<p class="pomodoro__subtitle">
 								Pick something outstanding to work on.
 							</p>
+						</header>
+
+						<div class="toolbar">
 							<NcButton
 								variant="secondary"
 								:disabled="loading"
 								@click="load">
 								Refresh
 							</NcButton>
-						</header>
+							<NcButton
+								variant="primary"
+								:disabled="!selected || busy"
+								@click="start">
+								Start focus
+							</NcButton>
+							<label v-if="selected" class="settings__field settings__field--task">
+								Cycles for this task
+								<input
+									:value="cfg(selected.id).cyclesPerTask"
+									type="number"
+									min="1"
+									max="24"
+									:disabled="busy"
+									@change="onCyclesChange">
+							</label>
+						</div>
 
 						<fieldset class="settings">
 							<legend>Pomodoro settings</legend>
@@ -352,77 +371,61 @@ onUnmounted(() => {
 							</label>
 						</fieldset>
 
-						<NcEmptyContent
-							v-if="items.length === 0"
-							name="Nothing outstanding">
-							<template #description>
-								No open Deck cards or Tasks were found.
+						<!-- Long lists scroll here rather than pushing the page down -->
+						<div class="pomodoro__scroll">
+							<NcEmptyContent
+								v-if="items.length === 0"
+								name="Nothing outstanding">
+								<template #description>
+									No open Deck cards or Tasks were found.
+								</template>
+							</NcEmptyContent>
+
+							<template v-else>
+								<section
+									v-if="tasks.length"
+									class="pomodoro__group">
+									<h2>Tasks</h2>
+									<ul class="pomodoro__list">
+										<li
+											v-for="item in tasks"
+											:key="item.id"
+											class="pomodoro__item"
+											:class="{ 'pomodoro__item--selected': selected?.id === item.id }"
+											@click="selected = item">
+											<span class="pomodoro__title">{{ item.title }}</span>
+											<span class="pomodoro__meta">
+												<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
+												<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
+												<span v-if="cfg(item.id).completed" class="pomodoro__completed">{{ cfg(item.id).completed }} completed</span>
+												<span v-if="cfg(item.id).skipped" class="pomodoro__skipped">{{ cfg(item.id).skipped }} skipped</span>
+											</span>
+										</li>
+									</ul>
+								</section>
+
+								<section
+									v-if="deck.length"
+									class="pomodoro__group">
+									<h2>Deck</h2>
+									<ul class="pomodoro__list">
+										<li
+											v-for="item in deck"
+											:key="item.id"
+											class="pomodoro__item"
+											:class="{ 'pomodoro__item--selected': selected?.id === item.id }"
+											@click="selected = item">
+											<span class="pomodoro__title">{{ item.title }}</span>
+											<span class="pomodoro__meta">
+												<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
+												<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
+												<span v-if="cfg(item.id).completed" class="pomodoro__completed">{{ cfg(item.id).completed }} completed</span>
+												<span v-if="cfg(item.id).skipped" class="pomodoro__skipped">{{ cfg(item.id).skipped }} skipped</span>
+											</span>
+										</li>
+									</ul>
+								</section>
 							</template>
-						</NcEmptyContent>
-
-						<template v-else>
-							<section
-								v-if="tasks.length"
-								class="pomodoro__group">
-								<h2>Tasks</h2>
-								<ul class="pomodoro__list">
-									<li
-										v-for="item in tasks"
-										:key="item.id"
-										class="pomodoro__item"
-										:class="{ 'pomodoro__item--selected': selected?.id === item.id }"
-										@click="selected = item">
-										<span class="pomodoro__title">{{ item.title }}</span>
-										<span class="pomodoro__meta">
-											<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
-											<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
-											<span v-if="cfg(item.id).completed" class="pomodoro__completed">{{ cfg(item.id).completed }} completed</span>
-											<span v-if="cfg(item.id).skipped" class="pomodoro__skipped">{{ cfg(item.id).skipped }} skipped</span>
-										</span>
-									</li>
-								</ul>
-							</section>
-
-							<section
-								v-if="deck.length"
-								class="pomodoro__group">
-								<h2>Deck</h2>
-								<ul class="pomodoro__list">
-									<li
-										v-for="item in deck"
-										:key="item.id"
-										class="pomodoro__item"
-										:class="{ 'pomodoro__item--selected': selected?.id === item.id }"
-										@click="selected = item">
-										<span class="pomodoro__title">{{ item.title }}</span>
-										<span class="pomodoro__meta">
-											<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
-											<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
-											<span v-if="cfg(item.id).completed" class="pomodoro__completed">{{ cfg(item.id).completed }} completed</span>
-											<span v-if="cfg(item.id).skipped" class="pomodoro__skipped">{{ cfg(item.id).skipped }} skipped</span>
-										</span>
-									</li>
-								</ul>
-							</section>
-						</template>
-
-						<div class="controls">
-							<NcButton
-								variant="primary"
-								:disabled="!selected || busy"
-								@click="start">
-								Start focus
-							</NcButton>
-							<label v-if="selected" class="settings__field settings__field--task">
-								Cycles for this task
-								<input
-									:value="cfg(selected.id).cyclesPerTask"
-									type="number"
-									min="1"
-									max="24"
-									:disabled="busy"
-									@change="onCyclesChange">
-							</label>
 						</div>
 					</section>
 
@@ -594,6 +597,24 @@ onUnmounted(() => {
 
 .settings__field--task input {
 	width: 64px;
+}
+
+/* Refresh / Start focus / per-task cycles, kept together under the title. */
+.toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	gap: 12px;
+}
+
+/* The list scrolls on its own so a long backlog cannot push the page down. */
+.pomodoro__scroll {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	overflow-y: auto;
+	max-height: 60vh;
+	padding-right: 4px;
 }
 
 .pomodoro__group h2 {
