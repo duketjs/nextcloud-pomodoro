@@ -15,9 +15,11 @@ import {
 	advancePhase,
 	clearSession,
 	DEFAULT_CYCLES_PER_TASK,
+	DEFAULT_SETTINGS,
 	fetchState,
 	formatDuration,
 	remainingMs,
+	saveSettings,
 	setPaused,
 	setTaskCycles,
 	startSession,
@@ -30,7 +32,7 @@ const failed = ref(false)
 const selected = ref<FocusItem | null>(null)
 
 const session = ref<PomodoroSession | null>(null)
-const settings = ref<TimerSettings>({ focusMinutes: 25, breakMinutes: 5 })
+const settings = ref<TimerSettings>({ ...DEFAULT_SETTINGS })
 // Per-item config and counters, keyed by item id.
 const taskConfig = ref<TaskConfigMap>({})
 const busy = ref(false)
@@ -67,6 +69,24 @@ const cycleNumber = computed(() => {
 
 	return Math.min(Math.max(1, current), s.cyclesPerTask)
 })
+// A phase whose time is up, waiting for the user because auto-transition is off.
+const waiting = computed(() => {
+	const s = session.value
+
+	return !settings.value.autoTransition
+		&& !!s
+		&& s.phase !== 'done'
+		&& s.running
+		&& left.value <= 0
+})
+const waitingMessage = computed(() => {
+	if (session.value?.phase === 'focus') {
+		return 'Focus finished'
+	}
+
+	return 'Rest over'
+})
+const waitingAction = computed(() => (session.value?.phase === 'focus' ? 'Start rest' : 'Start focus'))
 
 /**
  * Config for an item, with defaults for anything the user has not set yet.
@@ -107,6 +127,27 @@ async function start(): Promise<void> {
 	} finally {
 		busy.value = false
 	}
+}
+
+/**
+ * Persist the timer preferences (focus/rest minutes and auto-transition).
+ *
+ * The response is deliberately not written back into `settings`: two quick
+ * edits would otherwise race, each response overwriting the other's value.
+ * The inputs already constrain the ranges to what the server accepts.
+ */
+async function onSettingsChange(): Promise<void> {
+	busy.value = true
+	try {
+		await saveSettings(settings.value)
+	} finally {
+		busy.value = false
+	}
+}
+
+async function onAutoTransitionChange(event: Event): Promise<void> {
+	settings.value.autoTransition = (event.target as HTMLInputElement).checked
+	await onSettingsChange()
 }
 
 /**
@@ -152,6 +193,21 @@ async function skip(): Promise<void> {
 	}
 }
 
+/**
+ * Start the next phase by hand. The phase that just ended ran its full course,
+ * so it counts as completed rather than skipped.
+ */
+async function advanceNow(): Promise<void> {
+	busy.value = true
+	try {
+		const result = await advancePhase(false)
+		session.value = result.session
+		taskConfig.value = result.tasks
+	} finally {
+		busy.value = false
+	}
+}
+
 async function stop(): Promise<void> {
 	busy.value = true
 	try {
@@ -166,6 +222,11 @@ async function stop(): Promise<void> {
 
 async function tick(): Promise<void> {
 	now.value = Date.now()
+	// Only move on by ourselves when the user asked for it. In manual mode the
+	// clock stops at 00:00 and the panel offers a button instead.
+	if (!settings.value.autoTransition) {
+		return
+	}
 	// The phase ran out, so this cycle counts as completed. `busy` guards
 	// against a slow request firing the same transition twice.
 	if (session.value?.running && session.value.phase !== 'done' && left.value <= 0 && !busy.value) {
@@ -218,157 +279,193 @@ onUnmounted(() => {
 					</template>
 				</NcEmptyContent>
 
-				<!-- A session is running (or the task is finished) -->
-				<template v-else-if="session">
-					<header class="pomodoro__header">
-						<h1>{{ session.task.title }}</h1>
-						<p v-if="session.task.list" class="pomodoro__subtitle">
-							{{ session.task.list }}
-						</p>
-					</header>
+				<div v-else class="pomodoro__columns">
+					<!-- Left: everything outstanding -->
+					<section class="pomodoro__col">
+						<header class="pomodoro__header">
+							<h1>Focus</h1>
+							<p class="pomodoro__subtitle">
+								Pick something outstanding to work on.
+							</p>
+							<NcButton
+								variant="secondary"
+								:disabled="loading"
+								@click="load">
+								Refresh
+							</NcButton>
+						</header>
 
-					<div class="timer" :class="`timer--${session.phase}`">
-						<span class="timer__phase">{{ phaseLabel }}</span>
-						<span class="timer__clock">{{ clock }}</span>
-						<span class="timer__cycle">
-							<template v-if="session.phase === 'done'">
-								{{ session.cyclesCompleted }} of {{ session.cyclesPerTask }} focus cycles done
+						<fieldset class="settings">
+							<legend>Pomodoro settings</legend>
+							<label class="settings__field">
+								Focus (min)
+								<input
+									v-model.number="settings.focusMinutes"
+									type="number"
+									min="1"
+									max="180"
+									:disabled="busy"
+									@change="onSettingsChange">
+							</label>
+							<label class="settings__field">
+								Rest (min)
+								<input
+									v-model.number="settings.breakMinutes"
+									type="number"
+									min="1"
+									max="60"
+									:disabled="busy"
+									@change="onSettingsChange">
+							</label>
+							<label class="settings__field settings__field--check">
+								<input
+									type="checkbox"
+									:checked="settings.autoTransition"
+									:disabled="busy"
+									@change="onAutoTransitionChange">
+								Auto-transition
+							</label>
+						</fieldset>
+
+						<NcEmptyContent
+							v-if="items.length === 0"
+							name="Nothing outstanding">
+							<template #description>
+								No open Deck cards or Tasks were found.
 							</template>
-							<template v-else>
-								Cycle {{ cycleNumber }} of {{ session.cyclesPerTask }}
-							</template>
-						</span>
-						<span v-if="!session.running && session.phase !== 'done'" class="timer__paused">
-							Paused
-						</span>
-					</div>
+						</NcEmptyContent>
 
-					<div class="controls">
-						<NcButton
-							v-if="session.phase !== 'done'"
-							variant="primary"
-							:disabled="busy"
-							@click="togglePause">
-							{{ session.running ? 'Pause' : 'Resume' }}
-						</NcButton>
-						<NcButton
-							v-if="session.phase !== 'done'"
-							variant="secondary"
-							:disabled="busy"
-							@click="skip">
-							{{ session.phase === 'focus' ? 'Skip to rest' : 'Skip to focus' }}
-						</NcButton>
-						<NcButton
-							variant="secondary"
-							:disabled="busy"
-							@click="stop">
-							{{ session.phase === 'done' ? 'Pick another task' : 'Stop' }}
-						</NcButton>
-					</div>
-				</template>
+						<template v-else>
+							<section
+								v-if="tasks.length"
+								class="pomodoro__group">
+								<h2>Tasks</h2>
+								<ul class="pomodoro__list">
+									<li
+										v-for="item in tasks"
+										:key="item.id"
+										class="pomodoro__item"
+										:class="{ 'pomodoro__item--selected': selected?.id === item.id }"
+										@click="selected = item">
+										<span class="pomodoro__title">{{ item.title }}</span>
+										<span class="pomodoro__meta">
+											<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
+											<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
+											<span v-if="cfg(item.id).completed" class="pomodoro__completed">{{ cfg(item.id).completed }} completed</span>
+											<span v-if="cfg(item.id).skipped" class="pomodoro__skipped">{{ cfg(item.id).skipped }} skipped</span>
+										</span>
+									</li>
+								</ul>
+							</section>
 
-				<!-- No session: pick a task and configure the timer -->
-				<template v-else>
-					<header class="pomodoro__header">
-						<h1>Focus</h1>
-						<p class="pomodoro__subtitle">
-							Pick something outstanding to work on.
-						</p>
-						<NcButton
-							variant="secondary"
-							:disabled="loading"
-							@click="load">
-							Refresh
-						</NcButton>
-					</header>
-
-					<fieldset class="settings">
-						<legend>Pomodoro settings</legend>
-						<label class="settings__field">
-							Focus (min)
-							<input v-model.number="settings.focusMinutes" type="number" min="1" max="180">
-						</label>
-						<label class="settings__field">
-							Rest (min)
-							<input v-model.number="settings.breakMinutes" type="number" min="1" max="60">
-						</label>
-					</fieldset>
-
-					<NcEmptyContent
-						v-if="items.length === 0"
-						name="Nothing outstanding">
-						<template #description>
-							No open Deck cards or Tasks were found.
+							<section
+								v-if="deck.length"
+								class="pomodoro__group">
+								<h2>Deck</h2>
+								<ul class="pomodoro__list">
+									<li
+										v-for="item in deck"
+										:key="item.id"
+										class="pomodoro__item"
+										:class="{ 'pomodoro__item--selected': selected?.id === item.id }"
+										@click="selected = item">
+										<span class="pomodoro__title">{{ item.title }}</span>
+										<span class="pomodoro__meta">
+											<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
+											<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
+											<span v-if="cfg(item.id).completed" class="pomodoro__completed">{{ cfg(item.id).completed }} completed</span>
+											<span v-if="cfg(item.id).skipped" class="pomodoro__skipped">{{ cfg(item.id).skipped }} skipped</span>
+										</span>
+									</li>
+								</ul>
+							</section>
 						</template>
-					</NcEmptyContent>
 
-					<template v-else>
-						<section
-							v-if="tasks.length"
-							class="pomodoro__group">
-							<h2>Tasks</h2>
-							<ul class="pomodoro__list">
-								<li
-									v-for="item in tasks"
-									:key="item.id"
-									class="pomodoro__item"
-									:class="{ 'pomodoro__item--selected': selected?.id === item.id }"
-									@click="selected = item">
-									<span class="pomodoro__title">{{ item.title }}</span>
-									<span class="pomodoro__meta">
-										<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
-										<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
-										<span v-if="cfg(item.id).completed || cfg(item.id).skipped" class="pomodoro__counts">
-											{{ cfg(item.id).completed }} completed<span v-if="cfg(item.id).skipped"> · {{ cfg(item.id).skipped }} skipped</span>
-										</span>
-									</span>
-								</li>
-							</ul>
-						</section>
+						<div class="controls">
+							<NcButton
+								variant="primary"
+								:disabled="!selected || busy"
+								@click="start">
+								Start focus
+							</NcButton>
+							<label v-if="selected" class="settings__field settings__field--task">
+								Cycles for this task
+								<input
+									:value="cfg(selected.id).cyclesPerTask"
+									type="number"
+									min="1"
+									max="24"
+									:disabled="busy"
+									@change="onCyclesChange">
+							</label>
+						</div>
+					</section>
 
-						<section
-							v-if="deck.length"
-							class="pomodoro__group">
-							<h2>Deck</h2>
-							<ul class="pomodoro__list">
-								<li
-									v-for="item in deck"
-									:key="item.id"
-									class="pomodoro__item"
-									:class="{ 'pomodoro__item--selected': selected?.id === item.id }"
-									@click="selected = item">
-									<span class="pomodoro__title">{{ item.title }}</span>
-									<span class="pomodoro__meta">
-										<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
-										<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
-										<span v-if="cfg(item.id).completed || cfg(item.id).skipped" class="pomodoro__counts">
-											{{ cfg(item.id).completed }} completed<span v-if="cfg(item.id).skipped"> · {{ cfg(item.id).skipped }} skipped</span>
-										</span>
-									</span>
-								</li>
-							</ul>
-						</section>
-					</template>
+					<!-- Right: the timer, once something has been started -->
+					<section class="pomodoro__col pomodoro__col--timer">
+						<template v-if="session">
+							<header class="pomodoro__header">
+								<h1>{{ session.task.title }}</h1>
+								<p v-if="session.task.list" class="pomodoro__subtitle">
+									{{ session.task.list }}
+								</p>
+							</header>
 
-					<div class="controls">
-						<NcButton
-							variant="primary"
-							:disabled="!selected || busy"
-							@click="start">
-							Start focus
-						</NcButton>
-						<label v-if="selected" class="settings__field settings__field--task">
-							Cycles for this task
-							<input
-								:value="cfg(selected.id).cyclesPerTask"
-								type="number"
-								min="1"
-								max="24"
-								:disabled="busy"
-								@change="onCyclesChange">
-						</label>
-					</div>
-				</template>
+							<div class="timer" :class="`timer--${session.phase}`">
+								<span class="timer__phase">{{ phaseLabel }}</span>
+								<span class="timer__clock">{{ clock }}</span>
+								<span class="timer__cycle">
+									<template v-if="session.phase === 'done'">
+										{{ session.cyclesCompleted }} of {{ session.cyclesPerTask }} focus cycles done
+									</template>
+									<template v-else>
+										Cycle {{ cycleNumber }} of {{ session.cyclesPerTask }}
+									</template>
+								</span>
+								<span v-if="waiting" class="timer__waiting">{{ waitingMessage }}</span>
+								<span v-else-if="!session.running && session.phase !== 'done'" class="timer__paused">
+									Paused
+								</span>
+							</div>
+
+							<div class="controls">
+								<!-- Phase over, manual mode: the user starts the next one -->
+								<template v-if="waiting">
+									<NcButton
+										variant="primary"
+										:disabled="busy"
+										@click="advanceNow">
+										{{ waitingAction }}
+									</NcButton>
+								</template>
+								<template v-else-if="session.phase !== 'done'">
+									<NcButton
+										variant="primary"
+										:disabled="busy"
+										@click="togglePause">
+										{{ session.running ? 'Pause' : 'Resume' }}
+									</NcButton>
+									<NcButton
+										variant="secondary"
+										:disabled="busy"
+										@click="skip">
+										{{ session.phase === 'focus' ? 'Skip to rest' : 'Skip to focus' }}
+									</NcButton>
+								</template>
+								<NcButton
+									variant="secondary"
+									:disabled="busy"
+									@click="stop">
+									{{ session.phase === 'done' ? 'Pick another task' : 'Stop' }}
+								</NcButton>
+							</div>
+						</template>
+
+						<p v-else class="timer-placeholder">
+							Select a task and press Start focus.
+						</p>
+					</section>
+				</div>
 			</div>
 		</NcAppContent>
 	</NcContent>
@@ -376,11 +473,33 @@ onUnmounted(() => {
 
 <style scoped>
 .pomodoro {
+	padding: 20px;
+}
+
+/* Two halves: outstanding work on the left, the timer on the right. */
+.pomodoro__columns {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: 24px;
+	align-items: start;
+}
+
+@media (max-width: 900px) {
+	.pomodoro__columns {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+.pomodoro__col {
 	display: flex;
 	flex-direction: column;
 	gap: 12px;
-	padding: 20px;
-	max-width: 720px;
+	min-width: 0;
+}
+
+.pomodoro__col--timer {
+	position: sticky;
+	top: 12px;
 }
 
 .pomodoro__header {
@@ -394,6 +513,7 @@ onUnmounted(() => {
 	font-size: 22px;
 	font-weight: bold;
 	margin: 0;
+	overflow-wrap: anywhere;
 }
 
 .pomodoro__subtitle {
@@ -410,6 +530,7 @@ onUnmounted(() => {
 .settings {
 	display: flex;
 	flex-wrap: wrap;
+	align-items: flex-end;
 	gap: 16px;
 	border: 1px solid var(--color-border);
 	border-radius: var(--border-radius-large);
@@ -429,13 +550,20 @@ onUnmounted(() => {
 	color: var(--color-text-maxcontrast);
 }
 
-.settings__field input {
+.settings__field input[type="number"] {
 	width: 72px;
 	padding: 6px 8px;
 	border: 1px solid var(--color-border);
 	border-radius: var(--border-radius);
 	background-color: var(--color-main-background);
 	color: var(--color-main-text);
+}
+
+.settings__field--check {
+	flex-direction: row;
+	align-items: center;
+	gap: 8px;
+	padding-bottom: 8px;
 }
 
 .settings__field--task input {
@@ -492,16 +620,24 @@ onUnmounted(() => {
 	color: var(--color-warning);
 }
 
-.pomodoro__counts {
-	color: var(--color-success);
+/* Explicit colours so they stay bright regardless of the theme's success/
+   warning palette (which is muted, especially on dark themes). */
+.pomodoro__completed {
+	color: #00c853;
+	font-weight: 600;
+}
+
+.pomodoro__skipped {
+	color: #ff9100;
+	font-weight: 600;
 }
 
 .timer {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 6px;
-	padding: 28px 20px;
+	gap: 8px;
+	padding: 32px 20px;
 	border-radius: var(--border-radius-large);
 	border: 1px solid var(--color-border);
 	background-color: var(--color-background-dark);
@@ -522,7 +658,7 @@ onUnmounted(() => {
 }
 
 .timer__clock {
-	font-size: 64px;
+	font-size: 72px;
 	font-weight: bold;
 	font-variant-numeric: tabular-nums;
 	line-height: 1;
@@ -533,10 +669,22 @@ onUnmounted(() => {
 	color: var(--color-text-maxcontrast);
 }
 
+.timer__waiting {
+	font-size: 14px;
+	font-weight: bold;
+	color: #ff9100;
+}
+
 .timer__paused {
 	font-size: 13px;
 	font-weight: bold;
 	color: var(--color-warning);
+}
+
+.timer-placeholder {
+	color: var(--color-text-maxcontrast);
+	font-style: italic;
+	margin: 24px 0 0;
 }
 
 .controls {
@@ -544,10 +692,5 @@ onUnmounted(() => {
 	flex-wrap: wrap;
 	align-items: flex-end;
 	gap: 14px;
-}
-
-.controls__hint {
-	font-size: 13px;
-	color: var(--color-text-maxcontrast);
 }
 </style>

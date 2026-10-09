@@ -33,6 +33,8 @@ class SessionService {
 	private const DEFAULT_SETTINGS = [
 		'focusMinutes' => 25,
 		'breakMinutes' => 5,
+		// Manual by default: when a phase ends the user starts the next one.
+		'autoTransition' => false,
 	];
 
 	public function __construct(
@@ -62,7 +64,7 @@ class SessionService {
 	}
 
 	/**
-	 * @return array{focusMinutes: int, breakMinutes: int}
+	 * @return array{focusMinutes: int, breakMinutes: int, autoTransition: bool}
 	 */
 	public function getSettings(): array {
 		$uid = $this->uid();
@@ -79,7 +81,24 @@ class SessionService {
 		return [
 			'focusMinutes' => $this->clamp((int)($decoded['focusMinutes'] ?? 0), 1, 180, self::DEFAULT_SETTINGS['focusMinutes']),
 			'breakMinutes' => $this->clamp((int)($decoded['breakMinutes'] ?? 0), 1, 60, self::DEFAULT_SETTINGS['breakMinutes']),
+			'autoTransition' => (bool)($decoded['autoTransition'] ?? self::DEFAULT_SETTINGS['autoTransition']),
 		];
+	}
+
+	/**
+	 * Persist the user's timer preferences.
+	 *
+	 * @return array{focusMinutes: int, breakMinutes: int, autoTransition: bool}
+	 */
+	public function updateSettings(int $focusMinutes, int $breakMinutes, bool $autoTransition): array {
+		$settings = [
+			'focusMinutes' => $this->clamp($focusMinutes, 1, 180, self::DEFAULT_SETTINGS['focusMinutes']),
+			'breakMinutes' => $this->clamp($breakMinutes, 1, 60, self::DEFAULT_SETTINGS['breakMinutes']),
+			'autoTransition' => $autoTransition,
+		];
+		$this->saveSettings($settings);
+
+		return $settings;
 	}
 
 	/**
@@ -89,9 +108,12 @@ class SessionService {
 	 * @return array<string, mixed>
 	 */
 	public function start(array $task, int $focusMinutes, int $breakMinutes, int $cyclesPerTask): array {
+		// autoTransition is not part of starting a session; carry the stored
+		// preference over rather than resetting it.
 		$settings = [
 			'focusMinutes' => $this->clamp($focusMinutes, 1, 180, self::DEFAULT_SETTINGS['focusMinutes']),
 			'breakMinutes' => $this->clamp($breakMinutes, 1, 60, self::DEFAULT_SETTINGS['breakMinutes']),
+			'autoTransition' => $this->getSettings()['autoTransition'],
 		];
 		$this->saveSettings($settings);
 
@@ -125,6 +147,10 @@ class SessionService {
 	 * phase the user abandons with Skip is recorded as skipped and does NOT
 	 * count towards the target - abandoning a cycle is not finishing it.
 	 * Skipping a break is not a cycle, so it changes no counters.
+	 *
+	 * Whether this happens by itself or when the user asks is the front-end's
+	 * call, driven by the autoTransition preference; the server only ever does
+	 * it on request.
 	 *
 	 * @return array<string, mixed>|null
 	 */
@@ -236,7 +262,7 @@ class SessionService {
 	}
 
 	/**
-	 * @param array{focusMinutes: int, breakMinutes: int} $settings
+	 * @param array{focusMinutes: int, breakMinutes: int, autoTransition: bool} $settings
 	 */
 	private function saveSettings(array $settings): void {
 		$uid = $this->uid();

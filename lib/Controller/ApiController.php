@@ -62,6 +62,25 @@ class ApiController extends OCSController {
 	}
 
 	/**
+	 * Save the user's timer preferences.
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{settings: array<string, mixed>}, array{}>
+	 *
+	 * 200: Settings saved
+	 */
+	#[NoAdminRequired]
+	#[ApiRoute(verb: 'POST', url: '/settings')]
+	public function updateSettings(
+		int $focusMinutes = 25,
+		int $breakMinutes = 5,
+		bool $autoTransition = false,
+	): DataResponse {
+		return new DataResponse([
+			'settings' => $this->sessionService->updateSettings($focusMinutes, $breakMinutes, $autoTransition),
+		]);
+	}
+
+	/**
 	 * Start a focus session for an item.
 	 *
 	 * @return DataResponse<Http::STATUS_CREATED, array{session: array<string, mixed>, settings: array<string, mixed>}, array{}>
