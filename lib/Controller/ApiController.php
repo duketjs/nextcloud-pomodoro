@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OCA\Pomodoro\Controller;
 
 use OCA\Pomodoro\Service\SessionService;
+use OCA\Pomodoro\Service\TaskConfigService;
 use OCA\Pomodoro\Service\TaskService;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\ApiRoute;
@@ -22,6 +23,7 @@ class ApiController extends OCSController {
 		IRequest $request,
 		private TaskService $taskService,
 		private SessionService $sessionService,
+		private TaskConfigService $taskConfigService,
 	) {
 		parent::__construct($appName, $request);
 	}
@@ -42,23 +44,25 @@ class ApiController extends OCSController {
 	}
 
 	/**
-	 * The running focus session, if any, plus the user's saved timer settings.
+	 * Everything the UI needs on load: the running session (if any), the timer
+	 * settings, and the per-item configuration and cycle counters.
 	 *
-	 * @return DataResponse<Http::STATUS_OK, array{session: array<string, mixed>|null, settings: array<string, mixed>}, array{}>
+	 * @return DataResponse<Http::STATUS_OK, array{session: array<string, mixed>|null, settings: array<string, mixed>, tasks: array<string, mixed>}, array{}>
 	 *
-	 * 200: Session returned
+	 * 200: State returned
 	 */
 	#[NoAdminRequired]
-	#[ApiRoute(verb: 'GET', url: '/session')]
-	public function getSession(): DataResponse {
+	#[ApiRoute(verb: 'GET', url: '/state')]
+	public function state(): DataResponse {
 		return new DataResponse([
 			'session' => $this->sessionService->getSession(),
 			'settings' => $this->sessionService->getSettings(),
+			'tasks' => $this->taskConfigService->getAll(),
 		]);
 	}
 
 	/**
-	 * Start a focus session for a task.
+	 * Start a focus session for an item.
 	 *
 	 * @return DataResponse<Http::STATUS_CREATED, array{session: array<string, mixed>, settings: array<string, mixed>}, array{}>
 	 *
@@ -73,8 +77,11 @@ class ApiController extends OCSController {
 		string $taskList = '',
 		int $focusMinutes = 25,
 		int $breakMinutes = 5,
-		int $cyclesPerTask = 4,
 	): DataResponse {
+		// How many cycles this item takes is a property of the item, not a
+		// global setting; it defaults to 1 until the user says otherwise.
+		$cyclesPerTask = $this->taskConfigService->get($taskId)['cyclesPerTask'];
+
 		$session = $this->sessionService->start(
 			[
 				'id' => $taskId,
@@ -94,17 +101,40 @@ class ApiController extends OCSController {
 	}
 
 	/**
+	 * Set how many focus cycles an item is expected to take.
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{tasks: array<string, mixed>}, array{}>
+	 *
+	 * 200: Configuration saved
+	 */
+	#[NoAdminRequired]
+	#[ApiRoute(verb: 'POST', url: '/task-config')]
+	public function setTaskConfig(string $taskId, int $cyclesPerTask): DataResponse {
+		$this->taskConfigService->setCycles($taskId, $cyclesPerTask);
+
+		return new DataResponse([
+			'tasks' => $this->taskConfigService->getAll(),
+		]);
+	}
+
+	/**
 	 * Advance the session to the next phase (focus -> break -> ... -> done).
 	 *
-	 * @return DataResponse<Http::STATUS_OK, array{session: array<string, mixed>|null}, array{}>
+	 * @param bool $skipped true when the user abandoned the phase rather than
+	 *                      letting it run out; a skipped focus phase is counted
+	 *                      as skipped for the item and does not move the
+	 *                      session towards its cycle target.
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{session: array<string, mixed>|null, tasks: array<string, mixed>}, array{}>
 	 *
 	 * 200: Phase advanced
 	 */
 	#[NoAdminRequired]
 	#[ApiRoute(verb: 'PUT', url: '/session/phase')]
-	public function advanceSession(): DataResponse {
+	public function advanceSession(bool $skipped = false): DataResponse {
 		return new DataResponse([
-			'session' => $this->sessionService->advance(),
+			'session' => $this->sessionService->advance($skipped),
+			'tasks' => $this->taskConfigService->getAll(),
 		]);
 	}
 
@@ -124,7 +154,7 @@ class ApiController extends OCSController {
 	}
 
 	/**
-	 * Clear the running session.
+	 * Clear the running session. Cycle counters are history and are kept.
 	 *
 	 * @return DataResponse<Http::STATUS_OK, array{cleared: bool}, array{}>
 	 *

@@ -14,13 +14,15 @@ import type { FocusItem } from './api/types'
 import {
 	advancePhase,
 	clearSession,
-	fetchSession,
+	DEFAULT_CYCLES_PER_TASK,
+	fetchState,
 	formatDuration,
 	remainingMs,
 	setPaused,
+	setTaskCycles,
 	startSession,
 } from './api/session'
-import type { PomodoroSession, TimerSettings } from './api/session'
+import type { PomodoroSession, TaskConfig, TaskConfigMap, TimerSettings } from './api/session'
 
 const items = ref<FocusItem[]>([])
 const loading = ref(true)
@@ -28,7 +30,9 @@ const failed = ref(false)
 const selected = ref<FocusItem | null>(null)
 
 const session = ref<PomodoroSession | null>(null)
-const settings = ref<TimerSettings>({ focusMinutes: 25, breakMinutes: 5, cyclesPerTask: 4 })
+const settings = ref<TimerSettings>({ focusMinutes: 25, breakMinutes: 5 })
+// Per-item config and counters, keyed by item id.
+const taskConfig = ref<TaskConfigMap>({})
 const busy = ref(false)
 
 // Ticks once a second so the countdown re-renders. The remaining time is always
@@ -51,31 +55,48 @@ const phaseLabel = computed(() => {
 	}
 })
 // cyclesCompleted counts *finished* focus phases, so during a focus phase the
-// cycle under way is the next one.
+// cycle under way is the next one. During a rest it shows the cycle just
+// worked, and never drops below 1 (a rest after a skipped first cycle would
+// otherwise read "Cycle 0").
 const cycleNumber = computed(() => {
 	if (!session.value) {
 		return 0
 	}
+	const s = session.value
+	const current = s.phase === 'focus' ? s.cyclesCompleted + 1 : s.cyclesCompleted
 
-	return Math.min(
-		session.value.cyclesCompleted + (session.value.phase === 'focus' ? 1 : 0),
-		session.value.cyclesPerTask,
-	)
+	return Math.min(Math.max(1, current), s.cyclesPerTask)
 })
+// Cumulative tally for whatever is being focused on right now.
+const currentTally = computed(() => (session.value ? cfg(session.value.task.id) : null))
+
+/**
+ * Config for an item, with defaults for anything the user has not set yet.
+ */
+function cfg(id: string): TaskConfig {
+	return taskConfig.value[id] ?? { cyclesPerTask: DEFAULT_CYCLES_PER_TASK, completed: 0, skipped: 0 }
+}
 
 async function load(): Promise<void> {
 	loading.value = true
 	failed.value = false
 	try {
-		const state = await fetchSession()
+		const state = await fetchState()
 		settings.value = state.settings
 		session.value = state.session
+		taskConfig.value = state.tasks
 		items.value = await fetchFocusItems()
 	} catch (error) {
 		failed.value = true
 	} finally {
 		loading.value = false
 	}
+}
+
+async function refreshCounters(): Promise<void> {
+	const state = await fetchState()
+	taskConfig.value = state.tasks
+	session.value = state.session
 }
 
 async function start(): Promise<void> {
@@ -85,6 +106,22 @@ async function start(): Promise<void> {
 	busy.value = true
 	try {
 		session.value = await startSession(selected.value, settings.value)
+	} finally {
+		busy.value = false
+	}
+}
+
+/**
+ * Persist how many cycles the selected item should take.
+ */
+async function onCyclesChange(event: Event): Promise<void> {
+	if (!selected.value) {
+		return
+	}
+	const value = Number((event.target as HTMLInputElement).value)
+	busy.value = true
+	try {
+		taskConfig.value = await setTaskCycles(selected.value.id, value)
 	} finally {
 		busy.value = false
 	}
@@ -103,10 +140,15 @@ async function togglePause(): Promise<void> {
 	}
 }
 
+/**
+ * Move on without finishing the phase: recorded as a skipped cycle.
+ */
 async function skip(): Promise<void> {
 	busy.value = true
 	try {
-		session.value = await advancePhase()
+		const result = await advancePhase(true)
+		session.value = result.session
+		taskConfig.value = result.tasks
 	} finally {
 		busy.value = false
 	}
@@ -118,6 +160,7 @@ async function stop(): Promise<void> {
 		await clearSession()
 		session.value = null
 		selected.value = null
+		await refreshCounters()
 	} finally {
 		busy.value = false
 	}
@@ -125,12 +168,14 @@ async function stop(): Promise<void> {
 
 async function tick(): Promise<void> {
 	now.value = Date.now()
-	// Let the server move the phase on. `busy` guards against a slow request
-	// firing the same transition twice.
+	// The phase ran out, so this cycle counts as completed. `busy` guards
+	// against a slow request firing the same transition twice.
 	if (session.value?.running && session.value.phase !== 'done' && left.value <= 0 && !busy.value) {
 		busy.value = true
 		try {
-			session.value = await advancePhase()
+			const result = await advancePhase(false)
+			session.value = result.session
+			taskConfig.value = result.tasks
 		} finally {
 			busy.value = false
 		}
@@ -195,6 +240,7 @@ onUnmounted(() => {
 								Cycle {{ cycleNumber }} of {{ session.cyclesPerTask }}
 							</template>
 						</span>
+						<span v-if="currentTally" class="timer__counts">{{ currentTally.completed }} completed<span v-if="currentTally.skipped"> · {{ currentTally.skipped }} skipped</span></span>
 						<span v-if="!session.running && session.phase !== 'done'" class="timer__paused">
 							Paused
 						</span>
@@ -249,10 +295,6 @@ onUnmounted(() => {
 							Rest (min)
 							<input v-model.number="settings.breakMinutes" type="number" min="1" max="60">
 						</label>
-						<label class="settings__field">
-							Cycles per task
-							<input v-model.number="settings.cyclesPerTask" type="number" min="1" max="24">
-						</label>
 					</fieldset>
 
 					<NcEmptyContent
@@ -279,6 +321,9 @@ onUnmounted(() => {
 									<span class="pomodoro__meta">
 										<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
 										<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
+										<span v-if="cfg(item.id).completed || cfg(item.id).skipped" class="pomodoro__counts">
+											{{ cfg(item.id).completed }} completed<span v-if="cfg(item.id).skipped"> · {{ cfg(item.id).skipped }} skipped</span>
+										</span>
 									</span>
 								</li>
 							</ul>
@@ -299,6 +344,9 @@ onUnmounted(() => {
 									<span class="pomodoro__meta">
 										<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
 										<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
+										<span v-if="cfg(item.id).completed || cfg(item.id).skipped" class="pomodoro__counts">
+											{{ cfg(item.id).completed }} completed<span v-if="cfg(item.id).skipped"> · {{ cfg(item.id).skipped }} skipped</span>
+										</span>
 									</span>
 								</li>
 							</ul>
@@ -312,9 +360,16 @@ onUnmounted(() => {
 							@click="start">
 							Start focus
 						</NcButton>
-						<span v-if="selected" class="controls__hint">
-							Selected: {{ selected.title }}
-						</span>
+						<label v-if="selected" class="settings__field settings__field--task">
+							Cycles for this task
+							<input
+								:value="cfg(selected.id).cyclesPerTask"
+								type="number"
+								min="1"
+								max="24"
+								:disabled="busy"
+								@change="onCyclesChange">
+						</label>
 					</div>
 				</template>
 			</div>
@@ -386,6 +441,10 @@ onUnmounted(() => {
 	color: var(--color-main-text);
 }
 
+.settings__field--task input {
+	width: 64px;
+}
+
 .pomodoro__group h2 {
 	font-size: 15px;
 	text-transform: uppercase;
@@ -426,6 +485,7 @@ onUnmounted(() => {
 
 .pomodoro__meta {
 	display: flex;
+	flex-wrap: wrap;
 	gap: 10px;
 	font-size: 12px;
 	color: var(--color-text-maxcontrast);
@@ -433,6 +493,10 @@ onUnmounted(() => {
 
 .pomodoro__due {
 	color: var(--color-warning);
+}
+
+.pomodoro__counts {
+	color: var(--color-success);
 }
 
 .timer {
@@ -467,7 +531,8 @@ onUnmounted(() => {
 	line-height: 1;
 }
 
-.timer__cycle {
+.timer__cycle,
+.timer__counts {
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 }
@@ -481,8 +546,8 @@ onUnmounted(() => {
 .controls {
 	display: flex;
 	flex-wrap: wrap;
-	align-items: center;
-	gap: 10px;
+	align-items: flex-end;
+	gap: 14px;
 }
 
 .controls__hint {
