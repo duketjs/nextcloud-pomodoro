@@ -67,8 +67,6 @@ const cycleNumber = computed(() => {
 
 	return Math.min(Math.max(1, current), s.cyclesPerTask)
 })
-// Cumulative tally for whatever is being focused on right now.
-const currentTally = computed(() => (session.value ? cfg(session.value.task.id) : null))
 
 /**
  * Config for an item, with defaults for anything the user has not set yet.
@@ -240,7 +238,6 @@ onUnmounted(() => {
 								Cycle {{ cycleNumber }} of {{ session.cyclesPerTask }}
 							</template>
 						</span>
-						<span v-if="currentTally" class="timer__counts">{{ currentTally.completed }} completed<span v-if="currentTally.skipped"> · {{ currentTally.skipped }} skipped</span></span>
 						<span v-if="!session.running && session.phase !== 'done'" class="timer__paused">
 							Paused
 						</span>
@@ -531,8 +528,7 @@ onUnmounted(() => {
 	line-height: 1;
 }
 
-.timer__cycle,
-.timer__counts {
+.timer__cycle {
 	font-size: 13px;
 	color: var(--color-text-maxcontrast);
 }
