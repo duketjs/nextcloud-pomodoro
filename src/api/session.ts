@@ -10,11 +10,20 @@ const BASE = '/ocs/v2.php/apps/pomodoro'
 
 export type Phase = 'focus' | 'break' | 'done'
 
+/** Timer defaults the user can change. The cycle target is per item, not here. */
 export interface TimerSettings {
 	focusMinutes: number
 	breakMinutes: number
-	cyclesPerTask: number
 }
+
+/** Per-item configuration and tally, keyed by FocusItem.id. */
+export interface TaskConfig {
+	cyclesPerTask: number
+	completed: number
+	skipped: number
+}
+
+export type TaskConfigMap = Record<string, TaskConfig>
 
 export interface PomodoroSession {
 	task: {
@@ -36,25 +45,31 @@ export interface PomodoroSession {
 	pausedRemainingMs: number | null
 }
 
-export interface SessionState {
+export interface AppState {
 	session: PomodoroSession | null
 	settings: TimerSettings
+	tasks: TaskConfigMap
 }
 
+export const DEFAULT_CYCLES_PER_TASK = 1
+
 /**
- * The running session plus the user's saved preferences.
+ * Everything the app needs on load: running session, settings and per-item config.
  */
-export async function fetchSession(): Promise<SessionState> {
-	const response = await axios.get(`${BASE}/session`)
+export async function fetchState(): Promise<AppState> {
+	const response = await axios.get(`${BASE}/state`)
 
 	return {
 		session: response.data?.ocs?.data?.session ?? null,
-		settings: response.data?.ocs?.data?.settings ?? { focusMinutes: 25, breakMinutes: 5, cyclesPerTask: 4 },
+		settings: response.data?.ocs?.data?.settings ?? { focusMinutes: 25, breakMinutes: 5 },
+		tasks: response.data?.ocs?.data?.tasks ?? {},
 	}
 }
 
 /**
  * Start a session for the given item, replacing any session in progress.
+ *
+ * The cycle target is not sent: the server reads it from the item's own config.
  */
 export async function startSession(item: FocusItem, settings: TimerSettings): Promise<PomodoroSession> {
 	const response = await axios.post(`${BASE}/session`, {
@@ -64,19 +79,34 @@ export async function startSession(item: FocusItem, settings: TimerSettings): Pr
 		taskList: item.list,
 		focusMinutes: settings.focusMinutes,
 		breakMinutes: settings.breakMinutes,
-		cyclesPerTask: settings.cyclesPerTask,
 	})
 
 	return response.data.ocs.data.session
 }
 
 /**
- * Move to the next phase. The server decides what that is.
+ * Set how many focus cycles a given item is expected to take.
  */
-export async function advancePhase(): Promise<PomodoroSession | null> {
-	const response = await axios.put(`${BASE}/session/phase`)
+export async function setTaskCycles(taskId: string, cyclesPerTask: number): Promise<TaskConfigMap> {
+	const response = await axios.post(`${BASE}/task-config`, { taskId, cyclesPerTask })
 
-	return response.data?.ocs?.data?.session ?? null
+	return response.data?.ocs?.data?.tasks ?? {}
+}
+
+/**
+ * Move to the next phase. The server decides what that is, and returns the
+ * updated per-item counters.
+ *
+ * @param skipped true when the user pressed Skip rather than letting the phase
+ *                run out. A skipped focus phase counts as skipped, not completed.
+ */
+export async function advancePhase(skipped = false): Promise<{ session: PomodoroSession | null, tasks: TaskConfigMap }> {
+	const response = await axios.put(`${BASE}/session/phase`, { skipped })
+
+	return {
+		session: response.data?.ocs?.data?.session ?? null,
+		tasks: response.data?.ocs?.data?.tasks ?? {},
+	}
 }
 
 export async function setPaused(paused: boolean): Promise<PomodoroSession | null> {

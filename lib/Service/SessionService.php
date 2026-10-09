@@ -15,6 +15,9 @@ use OCP\IUserSession;
  * coming back resumes with the correct remaining time. The front-end only ever
  * renders `phaseEndsAt - now`.
  *
+ * The cycle target is per item (see TaskConfigService), not global. How many
+ * focus cycles have been finished or abandoned per item is also kept there.
+ *
  * Storage is a JSON blob in the user's app config; there is exactly one active
  * session per user, which is all a focus timer needs.
  */
@@ -30,12 +33,12 @@ class SessionService {
 	private const DEFAULT_SETTINGS = [
 		'focusMinutes' => 25,
 		'breakMinutes' => 5,
-		'cyclesPerTask' => 4,
 	];
 
 	public function __construct(
 		private IConfig $config,
 		private IUserSession $userSession,
+		private TaskConfigService $taskConfigService,
 	) {
 	}
 
@@ -59,7 +62,7 @@ class SessionService {
 	}
 
 	/**
-	 * @return array{focusMinutes: int, breakMinutes: int, cyclesPerTask: int}
+	 * @return array{focusMinutes: int, breakMinutes: int}
 	 */
 	public function getSettings(): array {
 		$uid = $this->uid();
@@ -76,7 +79,6 @@ class SessionService {
 		return [
 			'focusMinutes' => $this->clamp((int)($decoded['focusMinutes'] ?? 0), 1, 180, self::DEFAULT_SETTINGS['focusMinutes']),
 			'breakMinutes' => $this->clamp((int)($decoded['breakMinutes'] ?? 0), 1, 60, self::DEFAULT_SETTINGS['breakMinutes']),
-			'cyclesPerTask' => $this->clamp((int)($decoded['cyclesPerTask'] ?? 0), 1, 24, self::DEFAULT_SETTINGS['cyclesPerTask']),
 		];
 	}
 
@@ -90,7 +92,6 @@ class SessionService {
 		$settings = [
 			'focusMinutes' => $this->clamp($focusMinutes, 1, 180, self::DEFAULT_SETTINGS['focusMinutes']),
 			'breakMinutes' => $this->clamp($breakMinutes, 1, 60, self::DEFAULT_SETTINGS['breakMinutes']),
-			'cyclesPerTask' => $this->clamp($cyclesPerTask, 1, 24, self::DEFAULT_SETTINGS['cyclesPerTask']),
 		];
 		$this->saveSettings($settings);
 
@@ -99,7 +100,7 @@ class SessionService {
 			'task' => $task,
 			'focusMinutes' => $settings['focusMinutes'],
 			'breakMinutes' => $settings['breakMinutes'],
-			'cyclesPerTask' => $settings['cyclesPerTask'],
+			'cyclesPerTask' => $this->taskConfigService->normaliseCycles($cyclesPerTask),
 			'cyclesCompleted' => 0,
 			'phase' => self::PHASE_FOCUS,
 			'phaseStartedAt' => $now,
@@ -119,9 +120,15 @@ class SessionService {
 	 * focus -> break (or done once the target cycle count is reached)
 	 * break -> focus
 	 *
+	 * A focus phase that ends because its time ran out counts as a completed
+	 * cycle for the item and moves the session towards its target. A focus
+	 * phase the user abandons with Skip is recorded as skipped and does NOT
+	 * count towards the target - abandoning a cycle is not finishing it.
+	 * Skipping a break is not a cycle, so it changes no counters.
+	 *
 	 * @return array<string, mixed>|null
 	 */
-	public function advance(): ?array {
+	public function advance(bool $skipped = false): ?array {
 		$session = $this->getSession();
 		if ($session === null) {
 			return null;
@@ -129,12 +136,26 @@ class SessionService {
 
 		$now = $this->now();
 		$phase = $session['phase'] ?? self::PHASE_FOCUS;
+		$taskId = (string)($session['task']['id'] ?? '');
+
+		// The cycle target belongs to the item, so honour the *current* setting
+		// rather than whatever it was when the session started - the user may
+		// raise or lower it mid-session.
+		$target = $this->taskConfigService->get($taskId)['cyclesPerTask'];
+		$session['cyclesPerTask'] = $target;
 
 		if ($phase === self::PHASE_FOCUS) {
-			$completed = (int)($session['cyclesCompleted'] ?? 0) + 1;
-			$session['cyclesCompleted'] = $completed;
+			$completed = (int)($session['cyclesCompleted'] ?? 0);
 
-			if ($completed >= (int)($session['cyclesPerTask'] ?? 1)) {
+			if ($skipped) {
+				$this->taskConfigService->recordSkipped($taskId);
+			} else {
+				$completed++;
+				$session['cyclesCompleted'] = $completed;
+				$this->taskConfigService->recordCompleted($taskId);
+			}
+
+			if (!$skipped && $completed >= $target) {
 				$session['phase'] = self::PHASE_DONE;
 				$session['phaseStartedAt'] = $now;
 				$session['phaseEndsAt'] = null;
@@ -215,7 +236,7 @@ class SessionService {
 	}
 
 	/**
-	 * @param array{focusMinutes: int, breakMinutes: int, cyclesPerTask: int} $settings
+	 * @param array{focusMinutes: int, breakMinutes: int} $settings
 	 */
 	private function saveSettings(array $settings): void {
 		$uid = $this->uid();
