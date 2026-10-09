@@ -196,16 +196,13 @@ async function onAutoTransitionChange(event: Event): Promise<void> {
 }
 
 /**
- * Persist how many cycles the selected item should take.
+ * Persist how many cycles an item is expected to take.
  */
-async function onCyclesChange(event: Event): Promise<void> {
-	if (!selected.value) {
-		return
-	}
+async function onItemCyclesChange(item: FocusItem, event: Event): Promise<void> {
 	const value = Number((event.target as HTMLInputElement).value)
 	busy.value = true
 	try {
-		taskConfig.value = await setTaskCycles(selected.value.id, value)
+		taskConfig.value = await setTaskCycles(item.id, value)
 	} finally {
 		busy.value = false
 	}
@@ -351,16 +348,6 @@ onUnmounted(() => {
 								@click="start">
 								Start focus
 							</NcButton>
-							<label v-if="selected" class="settings__field settings__field--task">
-								Cycles for this task
-								<input
-									:value="cfg(selected.id).cyclesPerTask"
-									type="number"
-									min="1"
-									max="24"
-									:disabled="busy"
-									@change="onCyclesChange">
-							</label>
 						</div>
 
 						<fieldset class="settings">
@@ -433,13 +420,30 @@ onUnmounted(() => {
 									class="pomodoro__item"
 									:class="{ 'pomodoro__item--selected': selected?.id === item.id }"
 									@click="selected = item">
-									<span class="pomodoro__title">{{ item.title }}</span>
-									<span class="pomodoro__meta">
-										<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
-										<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
-										<span v-if="cfg(item.id).completed" class="pomodoro__completed">{{ cfg(item.id).completed }} completed</span>
-										<span v-if="cfg(item.id).skipped" class="pomodoro__skipped">{{ cfg(item.id).skipped }} skipped</span>
+									<span class="pomodoro__item-main">
+										<span class="pomodoro__title">{{ item.title }}</span>
+										<span class="pomodoro__meta">
+											<span v-if="item.list" class="pomodoro__list-name">{{ item.list }}</span>
+											<span v-if="item.due" class="pomodoro__due">due {{ formatDue(item.due) }}</span>
+											<span v-if="cfg(item.id).completed" class="pomodoro__completed">{{ cfg(item.id).completed }} completed</span>
+											<span v-if="cfg(item.id).skipped" class="pomodoro__skipped">{{ cfg(item.id).skipped }} skipped</span>
+										</span>
 									</span>
+									<!-- Editing the count must not double as selecting the row -->
+									<label
+										class="pomodoro__cycles"
+										title="Cycles for this task"
+										@click.stop>
+										Cycles
+										<input
+											:value="cfg(item.id).cyclesPerTask"
+											type="number"
+											min="1"
+											max="24"
+											:disabled="busy"
+											@click.stop
+											@change="onItemCyclesChange(item, $event)">
+									</label>
 								</li>
 							</ul>
 						</div>
@@ -615,11 +619,7 @@ onUnmounted(() => {
 	padding-bottom: 8px;
 }
 
-.settings__field--task input {
-	width: 64px;
-}
-
-/* Refresh / Start focus / per-task cycles, kept together under the title. */
+/* Refresh / Start focus, kept together under the title. */
 .toolbar {
 	display: flex;
 	flex-wrap: wrap;
@@ -666,11 +666,39 @@ onUnmounted(() => {
 
 .pomodoro__item {
 	display: flex;
-	flex-direction: column;
-	gap: 2px;
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
 	padding: 10px 14px;
 	cursor: pointer;
 	border-bottom: 1px solid var(--color-border);
+}
+
+.pomodoro__item-main {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+/* Per-item cycle count, editable straight from the row. */
+.pomodoro__cycles {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 0 0 auto;
+	font-size: 12px;
+	color: var(--color-text-maxcontrast);
+}
+
+.pomodoro__cycles input {
+	width: 56px;
+	padding: 4px 6px;
+	border: 1px solid var(--color-border);
+	border-radius: var(--border-radius);
+	background-color: var(--color-main-background);
+	color: var(--color-main-text);
 }
 
 .pomodoro__item:last-child {
