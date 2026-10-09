@@ -7,11 +7,18 @@ import axios from '@nextcloud/axios'
 import type { FocusItem } from './types'
 
 /**
- * Deck's OCS API. Deck's own web UI uses exactly these endpoints, so this is
- * the sanctioned way in and it reuses the browser session - no credentials of
- * our own are needed.
+ * Deck's OCS API (boards, stacks, cards). Deck's own web UI uses exactly these
+ * endpoints, so this is the sanctioned way in and it reuses the browser session
+ * - no credentials of our own are needed.
  */
 const API_BASE = '/ocs/v2.php/apps/deck/api/v1.0'
+
+/**
+ * Deck's action routes are ordinary app routes rather than OCS ones. The
+ * explicit /index.php is deliberate: it works whether or not the install is
+ * configured to rewrite pretty URLs.
+ */
+const APP_BASE = '/index.php/apps/deck'
 
 export interface DeckBoard {
 	id: number
@@ -24,7 +31,7 @@ interface DeckCard {
 	title: string
 	description?: string
 	duedate?: string | null
-	/** Set once the card has been moved to the board's done stack */
+	/** Set once the card has been marked done */
 	done?: string | null
 	archived?: boolean
 	stackId: number
@@ -58,7 +65,7 @@ export async function fetchDeckBoards(): Promise<DeckBoard[]> {
  * Outstanding cards of a single board.
  *
  * "Outstanding" means: the card itself is not archived and it has not been
- * marked done (which Deck does for cards sitting in the board's done stack).
+ * marked done (which Deck does for cards sitting in the board's done column).
  */
 export async function fetchDeckBoardItems(boardId: number): Promise<FocusItem[]> {
 	let stacks: DeckStack[]
@@ -91,4 +98,19 @@ export async function fetchDeckBoardItems(boardId: number): Promise<FocusItem[]>
 	}
 
 	return items
+}
+
+/**
+ * Mark a card as done.
+ *
+ * This is Deck's own action endpoint - the same one its user interface calls -
+ * so Deck does the work: it stamps the completion date and, when the board has
+ * a done column configured, moves the card into it. Using it keeps Deck's
+ * permission checks, activity entries and notifications intact.
+ *
+ * Note that when a board has no done column the card is still marked done but
+ * stays where it is; that is Deck's own behaviour, not something we override.
+ */
+export async function markCardDone(cardId: number): Promise<void> {
+	await axios.put(`${APP_BASE}/cards/${cardId}/done`)
 }
