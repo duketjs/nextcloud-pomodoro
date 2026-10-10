@@ -51,6 +51,11 @@ Two constraints shaped the design:
 - The session survives navigation and reloads, because the deadlines live on the server.
 - The final focus cycle of a session finishes the session — it does not offer a rest that has
   nowhere to go.
+- **Complete early** ends the current focus cycle the moment the work is actually done, rather than
+  waiting out the clock. The cycle counts as **completed** — the work was done, just sooner than
+  the timer allowed — and the session goes straight to its finished state, offering **Mark as Done**
+  and **Pick another task** there. It is available throughout a focus phase, including when the
+  timer has already reached `00:00` and is waiting on you.
 
 **Per-item tracking**
 
@@ -153,31 +158,53 @@ These cost real time the first time round and are not specific to this app:
 
 ```sh
 cd <this-repo>
+rm -rf js css            # the bundler does not clean its output directory
 npm run build
+mkdir -p release
 tar --exclude='./.git' --exclude='./node_modules' --exclude='./vendor' \
     --exclude='./vendor-bin' --exclude='./tests' --exclude='./.github' \
-    -czf ../pomodoro-1.0.0.tar.gz --transform 's,^\./,pomodoro/,' .
+    --exclude='./release' \
+    -czf release/pomodoro-<version>.tar.gz --transform 's,^\./,pomodoro/,' .
 ```
+
+Archives collect in `release/`, which is gitignored — build output does not belong in the
+repository. Keep the version in the filename so each drop is a distinct artifact and it is obvious
+at the transfer which one is being installed.
 
 **Copy it in.** On Nextcloud AIO the writable apps directory is
 `/var/www/html/custom_apps` inside the `nextcloud-aio-nextcloud` container:
 
 ```sh
-scp pomodoro-1.0.0.tar.gz <aio-host>:/tmp/
+scp release/pomodoro-<version>.tar.gz <aio-host>:/tmp/
 ssh <aio-host>
 
-docker cp /tmp/pomodoro-1.0.0.tar.gz nextcloud-aio-nextcloud:/tmp/
+docker cp /tmp/pomodoro-<version>.tar.gz nextcloud-aio-nextcloud:/tmp/
+docker exec nextcloud-aio-nextcloud sh -c \
+  'rm -rf /var/www/html/custom_apps/pomodoro && \
+   tar -xzf /tmp/pomodoro-<version>.tar.gz -C /var/www/html/custom_apps/'
 docker exec nextcloud-aio-nextcloud \
-  tar -xzf /tmp/pomodoro-1.0.0.tar.gz -C /var/www/html/custom_apps/
-docker exec nextcloud-aio-nextcloud \
-  chown -R www-data:www-data /var/www/html/custom_apps/pomodoro
+  chown -R www-data:www-data /var/www/html/custom_apps
 
 docker exec -u www-data nextcloud-aio-nextcloud php occ app:enable pomodoro
 docker exec -u www-data nextcloud-aio-nextcloud php occ background-job:list | grep -i pomodoro
 ```
 
+Chown the apps directory itself, not just the `pomodoro` folder inside it. Nextcloud resolves the
+app-store install path by walking `apps_paths` and requiring the first entry flagged writable —
+`custom_apps` — to be writable by the web user, so a root-owned tree drags an error onto the app
+list page (`/settings/apps`: `Cannot write into "apps" directory`) that has nothing to do with this
+app. Installed apps keep working while it is wrong, which is what makes it look unrelated.
+
 On a non-AIO install, extract into whichever apps directory `apps_paths` in `config.php` lists as
 writable, then `occ app:enable pomodoro`.
+
+**Updating an installed copy** is the same shape, with three additions: delete the old directory
+before extracting (it is in the block above — `tar -x` only overwrites what the archive contains, so
+stale build chunks otherwise survive in `js/` and `css/`); bump `<version>` in `appinfo/info.xml`
+when the front-end changed; and then run `occ upgrade`. That last step is not optional — a bumped
+version makes Nextcloud treat an upgrade as pending and the instance answers **503** until it is
+applied. Deleting the directory loses nothing: sessions, settings, targets and counters all live in
+the database and per-user app config.
 
 **Then** open the app over HTTPS and press Start focus once — that is when it asks for browser
 notification permission, because browsers only allow the prompt to follow a user gesture.
@@ -212,6 +239,7 @@ been finished, and which phase has already been announced. The front-end only ev
 | `POST /settings` | Save focus/rest lengths and the auto-transition preference |
 | `POST /session` | Start a session for an item |
 | `PUT /session/phase` | Move to the next phase (`skipped` distinguishes an abandoned cycle) |
+| `PUT /session/complete` | Finish the current focus cycle early, ahead of its target |
 | `PUT /session/pause` | Pause or resume, preserving the remaining time |
 | `DELETE /session` | Clear the session; counters are history and are kept |
 | `POST /task-config` | Set an item's cycle target |
