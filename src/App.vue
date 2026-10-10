@@ -18,6 +18,7 @@ import type { FocusItem } from './api/types'
 import {
 	advancePhase,
 	clearSession,
+	completeSessionEarly,
 	DEFAULT_CYCLES_PER_TASK,
 	DEFAULT_SETTINGS,
 	fetchState,
@@ -354,6 +355,23 @@ async function advanceNow(): Promise<void> {
 	}
 }
 
+/**
+ * Finish the current focus cycle early. The cycle still counts as completed -
+ * the work was done, just sooner than the timer allowed - and the session goes
+ * straight to its finished state, which offers the usual "Mark as Done" and
+ * "Pick another task" actions.
+ */
+async function completeEarly(): Promise<void> {
+	busy.value = true
+	try {
+		const result = await completeSessionEarly()
+		session.value = result.session
+		taskConfig.value = result.tasks
+	} finally {
+		busy.value = false
+	}
+}
+
 async function stop(): Promise<void> {
 	busy.value = true
 	try {
@@ -637,6 +655,14 @@ onUnmounted(() => {
 										{{ session.phase === 'focus' ? 'Skip to rest' : 'Skip to focus' }}
 									</NcButton>
 								</template>
+								<!-- Only offered while focusing: it closes the cycle now. -->
+								<NcButton
+									v-if="session.phase === 'focus'"
+									variant="secondary"
+									:disabled="busy"
+									@click="completeEarly">
+									Complete early
+								</NcButton>
 								<NcButton
 									variant="secondary"
 									:disabled="busy"
@@ -970,7 +996,10 @@ onUnmounted(() => {
 }
 
 .timer-error {
-	color: var(--color-error);
+	/* Explicitly bright and bold so it reads as a warning at a glance on both
+	   light and dark themes, matching the explicit state colours above. */
+	color: #ff5252;
+	font-weight: bold;
 	font-size: 13px;
 	margin: 0;
 }

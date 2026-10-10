@@ -250,6 +250,50 @@ class SessionService {
 		return $session;
 	}
 
+	/**
+	 * Finish the current focus cycle now, ahead of the cycle target.
+	 *
+	 * The cycle still counts as completed - the work was done, just sooner than
+	 * the timer allowed - and the session moves straight to its finished state
+	 * rather than going into a rest. From there the usual finished-state actions
+	 * apply (mark the card done in Deck, or pick something else).
+	 *
+	 * @return array<string, mixed>|null
+	 */
+	public function completeEarly(?string $uid = null): ?array {
+		$session = $this->getSession($uid);
+		if ($session === null) {
+			return null;
+		}
+		if (($session['phase'] ?? self::PHASE_DONE) === self::PHASE_DONE) {
+			return $session;
+		}
+
+		$taskId = (string)($session['task']['id'] ?? '');
+
+		// Only a focus phase is a cycle; finishing during a rest just ends the
+		// session without counting one.
+		if ($session['phase'] === self::PHASE_FOCUS) {
+			$session['cyclesCompleted'] = (int)($session['cyclesCompleted'] ?? 0) + 1;
+			$this->taskConfigService->recordCompleted($taskId, $uid);
+		}
+
+		// Use the current target so the finished panel reports it correctly even
+		// if the user changed it mid-session.
+		$session['cyclesPerTask'] = $this->taskConfigService->get($taskId, $uid)['cyclesPerTask'];
+
+		$session['phase'] = self::PHASE_DONE;
+		$session['phaseStartedAt'] = $this->now();
+		$session['phaseEndsAt'] = null;
+		$session['running'] = false;
+		$session['pausedRemainingMs'] = null;
+		$session['announcedPhase'] = null;
+
+		$this->save($session, $uid);
+
+		return $session;
+	}
+
 	public function clear(?string $uid = null): void {
 		$uid = $this->resolveUid($uid);
 		if ($uid === null) {

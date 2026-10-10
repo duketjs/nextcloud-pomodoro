@@ -130,6 +130,19 @@ export async function advancePhase(skipped = false): Promise<{ session: Pomodoro
 	}
 }
 
+/**
+ * Finish the current focus cycle now, ahead of its cycle target. The server
+ * counts the cycle as completed and moves the session to its finished state.
+ */
+export async function completeSessionEarly(): Promise<{ session: PomodoroSession | null, tasks: TaskConfigMap }> {
+	const response = await axios.put(`${BASE}/session/complete`)
+
+	return {
+		session: response.data?.ocs?.data?.session ?? null,
+		tasks: response.data?.ocs?.data?.tasks ?? {},
+	}
+}
+
 export async function setPaused(paused: boolean): Promise<PomodoroSession | null> {
 	const response = await axios.put(`${BASE}/session/pause`, { paused })
 

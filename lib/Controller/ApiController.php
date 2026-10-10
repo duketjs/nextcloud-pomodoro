@@ -143,6 +143,22 @@ class ApiController extends OCSController {
 	}
 
 	/**
+	 * Finish the current focus cycle now, ahead of its cycle target.
+	 *
+	 * @return DataResponse<Http::STATUS_OK, array{session: array<string, mixed>|null, tasks: array<string, mixed>}, array{}>
+	 *
+	 * 200: Session finished
+	 */
+	#[NoAdminRequired]
+	#[ApiRoute(verb: 'PUT', url: '/session/complete')]
+	public function completeEarly(): DataResponse {
+		return new DataResponse([
+			'session' => $this->sessionService->completeEarly(),
+			'tasks' => $this->taskConfigService->getAll(),
+		]);
+	}
+
+	/**
 	 * Pause or resume the current phase.
 	 *
 	 * @return DataResponse<Http::STATUS_OK, array{session: array<string, mixed>|null}, array{}>
