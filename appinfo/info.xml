@@ -12,7 +12,7 @@ Features:
 * Customizable focus and break durations per cycle
 * Set how many Pomodoro cycles complete the selected task
 * Notification when a focus or break period ends</description>
-	<version>1.0.0</version>
+	<version>1.0.1</version>
 	<licence>AGPL-3.0-or-later</licence>
 	<author mail="duketjs@gmail.com" homepage="">Jokersmile</author>
 	<namespace>Pomodoro</namespace>
