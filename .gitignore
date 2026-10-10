@@ -11,3 +11,11 @@
 /js/
 /css/
 /release/
+
+# Release signing material - never commit these. The private key is the only
+# thing that authorises updates to a published app, and signature.json belongs
+# to the release artifact, not to the source tree.
+/*.key
+/*.csr
+/*.crt
+/appinfo/signature.json
