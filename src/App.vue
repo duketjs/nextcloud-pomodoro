@@ -798,6 +798,12 @@ onUnmounted(() => {
 	border: 1px solid var(--color-border);
 	border-radius: var(--border-radius-large);
 	overflow: hidden;
+	/* Stay at the natural height of the rows. `overflow: hidden` (needed so the
+	   rounded corners clip the rows) also removes the flexbox automatic minimum
+	   size, so as a child of the max-height scroll pane this list would be
+	   squashed to the pane's height and then silently clip the rows that no
+	   longer fit - with no scrollbar, because the pane itself never overflows. */
+	flex: 0 0 auto;
 }
 
 .pomodoro__item {
