@@ -39,6 +39,8 @@ Two constraints shaped the design:
 - "Outstanding" excludes archived boards and cards, and cards Deck has marked done.
 - Scrollable list, so a long backlog does not push the page around.
 - Each row carries its own cycle target and its own counters.
+- Each row links back to the card in Deck (**Go to card**), opened in a new tab so the running timer
+  is left alone.
 
 **Timing**
 

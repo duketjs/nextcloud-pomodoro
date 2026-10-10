@@ -87,8 +87,8 @@ async function markDone(): Promise<void> {
 	if (!session.value) {
 		return
 	}
-	const cardId = Number(session.value.task.id.replace(/^deck:/, ''))
-	if (!Number.isFinite(cardId)) {
+	const cardId = deckCardId(session.value.task.id)
+	if (cardId === null) {
 		actionError.value = 'This item is not a Deck card.'
 		return
 	}
@@ -107,6 +107,25 @@ async function markDone(): Promise<void> {
 	} finally {
 		busy.value = false
 	}
+}
+
+/**
+ * The Deck card id behind an item, or null when the item did not come from Deck.
+ */
+function deckCardId(itemId: string): number | null {
+	const id = Number(itemId.replace(/^deck:/, ''))
+
+	return Number.isFinite(id) ? id : null
+}
+
+/**
+ * Deck's own link for a card. That route works out the board itself and redirects
+ * to the card's view inside it, so only the card id is needed.
+ */
+function deckCardUrl(item: FocusItem): string {
+	const cardId = deckCardId(item.id)
+
+	return cardId === null ? '#' : `/index.php/apps/deck/card/${cardId}`
 }
 
 // Ticks once a second so the countdown re-renders. The remaining time is always
@@ -522,21 +541,32 @@ onUnmounted(() => {
 											<span v-if="cfg(item.id).skipped" class="pomodoro__skipped">{{ cfg(item.id).skipped }} skipped</span>
 										</span>
 									</span>
-									<!-- Editing the count must not double as selecting the row -->
-									<label
-										class="pomodoro__cycles"
-										title="Cycles for this task"
-										@click.stop>
-										Cycles
-										<input
-											:value="cfg(item.id).cyclesPerTask"
-											type="number"
-											min="1"
-											max="24"
-											:disabled="busy"
-											@click.stop
-											@change="onItemCyclesChange(item, $event)">
-									</label>
+									<span class="pomodoro__item-actions">
+										<!-- Editing the count must not double as selecting the row -->
+										<label
+											class="pomodoro__cycles"
+											title="Cycles for this task"
+											@click.stop>
+											Cycles
+											<input
+												:value="cfg(item.id).cyclesPerTask"
+												type="number"
+												min="1"
+												max="24"
+												:disabled="busy"
+												@click.stop
+												@change="onItemCyclesChange(item, $event)">
+										</label>
+										<a
+											class="pomodoro__goto"
+											:href="deckCardUrl(item)"
+											target="_blank"
+											rel="noreferrer noopener"
+											title="Open this card in Deck"
+											@click.stop>
+											Go to card
+										</a>
+									</span>
 								</li>
 							</ul>
 						</div>
@@ -788,6 +818,14 @@ onUnmounted(() => {
 	min-width: 0;
 }
 
+/* Row actions: the cycle count, and the way out to the card in Deck. */
+.pomodoro__item-actions {
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	flex: 0 0 auto;
+}
+
 /* Per-item cycle count, editable straight from the row. */
 .pomodoro__cycles {
 	display: flex;
@@ -796,6 +834,11 @@ onUnmounted(() => {
 	flex: 0 0 auto;
 	font-size: 12px;
 	color: var(--color-text-maxcontrast);
+}
+
+.pomodoro__goto {
+	font-size: 12px;
+	white-space: nowrap;
 }
 
 .pomodoro__cycles input {
